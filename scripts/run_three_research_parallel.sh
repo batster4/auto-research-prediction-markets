@@ -17,7 +17,10 @@ mkdir -p "$ROOT/research_runs"
 
 run_one() {
   local taskfile="$1" expdir="$2" log="$3"
+  # Unique label per research line so the agent prompt does not treat parallel runs as one study.
+  line="$(basename "$expdir")"
   nohup env ARPM_EXPERIMENTS_DIR="$expdir" \
+    ARPM_RESEARCH_LINE="$line" \
     ARPM_MAX_ITERATIONS="$ARPM_MAX_ITERATIONS" \
     ARPM_MAX_SECONDS_PER_ITERATION="$ARPM_MAX_SECONDS_PER_ITERATION" \
     PYTHONPATH="$ROOT/src" \

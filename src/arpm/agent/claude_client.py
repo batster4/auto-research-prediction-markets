@@ -134,21 +134,33 @@ class ClaudeResearchClient:
         task: str,
         prior_iterations: list[dict],
         max_strategies: int = 5,
+        *,
+        experiment_root: str = "",
+        research_line_label: str = "",
     ) -> list[StrategySpec]:
         """Ask the model for a JSON array of strategy specs."""
         domain = get_domain_context()
         prior = json.dumps(prior_iterations, indent=2) if prior_iterations else "[]"
-        user = f"""Research task:
+        exp_id = experiment_root or "(single experiment)"
+        line = research_line_label or "this research line"
+        user = f"""Experiment isolation (mandatory):
+- This run is **standalone**: experiment directory `{exp_id}`, research line `{line}`.
+- Optimize **only** for the research task below. Do **not** align proposals with other parallel studies, other experiment folders, or any hypothetical "global best" PnL from elsewhere.
+- The "prior iterations" JSON below is **only** from **this** experiment on **this** dataset — it never includes results from other tasks, processes, or research tracks.
+- Do **not** pick a strategy because it might match outcomes from another unrelated study. Ground every proposal in **this** task text and **this** prior JSON only.
+- Web search (if used) is for **methods and theory** tied to **this** task — not to copy conclusions from unrelated experiments.
+
+Research task:
 {task}
 
 Domain reference (follow these mechanics):
 {domain}
 
-Research memory — prior iterations (newest last). Each entry has iteration number, candidate strategy metrics, and best_in_iteration.
-Use this to **avoid repeating** parameter sets that already failed or plateaued; refine or explore new regions. Prefer diversity when prior winners are clear.
+Research memory — prior iterations for **this experiment only** (newest last). Each entry has iteration number, candidate strategy metrics, and best_in_iteration.
+Use this to **avoid repeating** parameter sets that already failed or plateaued **within this run**; refine or explore new regions. Prefer diversity when prior winners are clear.
 {prior}
 
-External knowledge: You have **web search** when enabled. Use it sparingly (a few queries per turn) to find **recent** approaches: academic papers, quant notes, prediction-market or binary-option research, GBM/digital formulations, and similar — then map findings into our JSON `threshold` / `momentum` / `hold` templates with realistic numeric params.
+External knowledge: You have **web search** when enabled. Use it sparingly (a few queries per turn) to find **recent** approaches relevant to **this** task: academic papers, quant notes, prediction-market or binary-option research, GBM/digital formulations, and similar — then map findings into our JSON `threshold` / `momentum` / `hold` templates with realistic numeric params.
 
 Respond with ONLY a JSON array (no markdown fences, no commentary) of at most {max_strategies} objects.
 The **last** assistant text must be **only** valid JSON starting with `[` and ending with `]` — no words before or after.
@@ -178,7 +190,8 @@ Tune parameters using prior results; explore diverse candidates."""
         system = (
             "You output strategy proposals as machine-readable JSON only. "
             "The final user-visible assistant text must be a single JSON array and nothing else — "
-            "no markdown, no headings, no bullet lists, no explanation outside the array."
+            "no markdown, no headings, no bullet lists, no explanation outside the array. "
+            "Each experiment is independent: do not assume or import strategy choices from other research lines."
         )
 
         last_err: ValueError | None = None
@@ -224,16 +237,18 @@ Tune parameters using prior results; explore diverse candidates."""
         # Third attempt: minimal prompt, no tools/thinking — turn prose + context into JSON only.
         recovery_user = f"""You must output ONLY a JSON array (no markdown, no explanation).
 
+This experiment remains isolated (directory `{exp_id}`, line `{line}`). Do not mirror strategies from other parallel research runs.
+
 Research task (reminder):
 {task[:6000]}
 
 Domain reference:
 {domain[:8000]}
 
-Prior iterations (JSON):
+Prior iterations for this experiment only (JSON):
 {prior[:20000]}
 
-The model previously answered with prose or invalid JSON. Using the task, domain, and prior results,
+The model previously answered with prose or invalid JSON. Using **only** this task, domain, and this prior JSON,
 propose up to {max_strategies} distinct strategy specs as ONE JSON array.
 Each element: {{"type": "threshold" | "momentum" | "hold", "params": {{...}}}}
 Examples: {{"type": "threshold", "params": {{"buy_below": 0.35}}}}, {{"type": "momentum", "params": {{"lookback": 3, "buy_if_rising": 1}}}}, {{"type": "hold", "params": {{}}}}.

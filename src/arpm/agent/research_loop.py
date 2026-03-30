@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -65,7 +66,13 @@ def run_research_experiment(
             specs = _dry_run_specs(iteration)
         else:
             assert client is not None
-            specs = client.propose_strategies(task, prior)
+            line = os.environ.get("ARPM_RESEARCH_LINE", "").strip() or paths.root.parent.name
+            specs = client.propose_strategies(
+                task,
+                prior,
+                experiment_root=str(paths.root.resolve()),
+                research_line_label=line,
+            )
 
         iteration_records: list[dict[str, Any]] = []
         best: dict[str, Any] | None = None
