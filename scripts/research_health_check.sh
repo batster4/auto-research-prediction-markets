@@ -6,7 +6,9 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RUNS="$ROOT/research_runs"
 LOG="$RUNS/health_monitor.log"
-DATA="${ARPM_DATA:-$ROOT/data/arpm_c3_resolved_mar12plus_sample500k.csv}"
+DATA_BS="${ARPM_DATA_BS:-}"
+DATA_GBM="${ARPM_DATA_GBM:-}"
+DATA_OPEN="${ARPM_DATA_OPEN:-}"
 PY="${PYTHON:-$ROOT/.venv/bin/python}"
 TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
@@ -64,13 +66,13 @@ mkdir -p "$RUNS"
   fi
 
   if [[ "${RESTART_ON_FAILURE:-0}" == "1" && "$need_restart" -eq 1 ]]; then
-    if [[ -f "$DATA" ]]; then
+    if [[ -n "$DATA_BS" && -n "$DATA_GBM" && -n "$DATA_OPEN" && -f "$DATA_BS" && -f "$DATA_GBM" && -f "$DATA_OPEN" ]]; then
       echo "ACTION restarting three jobs via run_three_research_parallel.sh"
-      export ARPM_DATA="$DATA"
+      export ARPM_DATA_BS="$DATA_BS" ARPM_DATA_GBM="$DATA_GBM" ARPM_DATA_OPEN="$DATA_OPEN"
       export ARPM_MAX_ITERATIONS="${ARPM_MAX_ITERATIONS:-12}"
       bash "$ROOT/scripts/run_three_research_parallel.sh" || echo "WARN restart script failed"
     else
-      echo "CRITICAL cannot restart: missing DATA $DATA"
+      echo "CRITICAL cannot restart: set ARPM_DATA_BS, ARPM_DATA_GBM, ARPM_DATA_OPEN to three existing CSV paths"
     fi
   fi
 
