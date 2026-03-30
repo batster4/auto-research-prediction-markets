@@ -1,11 +1,24 @@
-from arpm.strategies.base import Strategy, StrategySpec, strategy_from_spec
-from arpm.strategies.builtin import HoldStrategy, MomentumStrategy, ThresholdStrategy
+from arpm.strategies.base import EntrySignal, Strategy, StrategySpec, strategy_from_spec
+from arpm.strategies.builtin import (
+    EarlyThresholdStrategy,
+    HoldStrategy,
+    MACrossoverStrategy,
+    MeanReversionStrategy,
+    MomentumStrategy,
+    RelativeValueStrategy,
+    ThresholdStrategy,
+)
 
 __all__ = [
+    "EntrySignal",
     "Strategy",
     "StrategySpec",
     "strategy_from_spec",
     "ThresholdStrategy",
     "MomentumStrategy",
     "HoldStrategy",
+    "EarlyThresholdStrategy",
+    "MeanReversionStrategy",
+    "RelativeValueStrategy",
+    "MACrossoverStrategy",
 ]

@@ -1,4 +1,6 @@
-"""Backtesting engine — simulation only; strategies and metrics stay separate."""
+"""Backtesting engine — realistic simulation with resolution cutoff, fees,
+and slippage.  Strategies never see the outcome column or the last
+*resolution_cutoff_s* seconds of each market."""
 
 from __future__ import annotations
 
@@ -6,27 +8,116 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from arpm.backtest.fees import taker_fee_per_share
 from arpm.strategies.base import Strategy
 
 
 @dataclass(frozen=True)
+class MarketTradeResult:
+    """Result for one market."""
+    market_id: str
+    outcome: float
+    entered: bool
+    entry_price: float | None = None
+    entry_time: pd.Timestamp | None = None  # type: ignore[assignment]
+    gross_pnl: float = 0.0
+    fee: float = 0.0
+    slippage_cost: float = 0.0
+    pnl: float = 0.0
+
+
+@dataclass(frozen=True)
 class BacktestResult:
-    per_market_pnl: list[float]
-    markets_traded: int
+    """Aggregated backtest output — wraps per-market results."""
+    market_results: list[MarketTradeResult]
+
+    @property
+    def per_market_pnl(self) -> list[float]:
+        return [r.pnl for r in self.market_results]
 
     @property
     def total_pnl(self) -> float:
-        return float(sum(self.per_market_pnl))
+        return sum(r.pnl for r in self.market_results)
+
+    @property
+    def markets_traded(self) -> int:
+        return sum(1 for r in self.market_results if r.entered)
+
+    @property
+    def total_capital_deployed(self) -> float:
+        return sum(
+            r.entry_price for r in self.market_results
+            if r.entered and r.entry_price is not None
+        )
+
+    @property
+    def total_fees(self) -> float:
+        return sum(r.fee for r in self.market_results if r.entered)
 
 
-def run_backtest(trades: pd.DataFrame, strategy: Strategy) -> BacktestResult:
-    """Run one strategy across all markets in `trades` (canonical columns)."""
+def run_backtest(
+    trades: pd.DataFrame,
+    strategy: Strategy,
+    *,
+    resolution_cutoff_s: float = 60.0,
+    slippage: float = 0.005,
+    apply_fees: bool = True,
+) -> BacktestResult:
+    """Run *strategy* across all markets in *trades*.
+
+    Realism knobs
+    -------------
+    resolution_cutoff_s : seconds before each market's last timestamp that
+        are **removed** from the tradeable window (prevents near-resolution
+        exploitation).
+    slippage : fixed amount added to the signal price to model execution cost.
+    apply_fees : apply Polymarket taker fee schedule per share.
+    """
     if trades.empty:
-        return BacktestResult(per_market_pnl=[], markets_traded=0)
+        return BacktestResult(market_results=[])
 
-    per_market: list[float] = []
-    for _, group in trades.groupby("market_id", sort=False):
-        pnl = float(strategy.run_market(group))
-        per_market.append(pnl)
+    results: list[MarketTradeResult] = []
 
-    return BacktestResult(per_market_pnl=per_market, markets_traded=len(per_market))
+    for mid, group in trades.groupby("market_id", sort=False):
+        sorted_rows = group.sort_values("timestamp")
+        outcome = float(sorted_rows["outcome"].iloc[-1])
+        last_ts = sorted_rows["timestamp"].iloc[-1]
+        cutoff_ts = last_ts - pd.Timedelta(seconds=resolution_cutoff_s)
+
+        tradeable = (
+            sorted_rows
+            .loc[sorted_rows["timestamp"] <= cutoff_ts, ["timestamp", "price_yes"]]
+            .copy()
+        )
+
+        if tradeable.empty:
+            results.append(MarketTradeResult(
+                market_id=str(mid), outcome=outcome, entered=False,
+            ))
+            continue
+
+        signal = strategy.decide(tradeable)
+
+        if signal is not None:
+            effective_price = min(signal.price + slippage, 0.99)
+            fee = taker_fee_per_share(effective_price) if apply_fees else 0.0
+            gross = outcome - effective_price
+            net = gross - fee
+
+            results.append(MarketTradeResult(
+                market_id=str(mid),
+                outcome=outcome,
+                entered=True,
+                entry_price=effective_price,
+                entry_time=signal.timestamp,
+                gross_pnl=gross,
+                fee=fee,
+                slippage_cost=slippage,
+                pnl=net,
+            ))
+        else:
+            results.append(MarketTradeResult(
+                market_id=str(mid), outcome=outcome, entered=False,
+            ))
+
+    return BacktestResult(market_results=results)

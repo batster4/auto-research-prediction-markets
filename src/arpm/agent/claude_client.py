@@ -14,7 +14,6 @@ from arpm.strategies.base import StrategySpec
 
 def _extract_json_list(text: str) -> list[Any]:
     text = text.strip()
-    # Strip optional markdown fences (model sometimes wraps JSON)
     text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\s*```\s*$", "", text)
     text = text.strip()
@@ -24,7 +23,6 @@ def _extract_json_list(text: str) -> list[Any]:
             return data
     except json.JSONDecodeError:
         pass
-    # First [ ... ] span (non-greedy inner match can fail on nested strings; try last resort)
     m = re.search(r"\[[\s\S]*\]", text)
     if m:
         try:
@@ -32,7 +30,6 @@ def _extract_json_list(text: str) -> list[Any]:
         except json.JSONDecodeError:
             pass
     decoder = json.JSONDecoder()
-    # Prefer a JSON array at the **end** of the reply (models often append it after prose).
     for i in range(len(text) - 1, -1, -1):
         if text[i] != "[":
             continue
@@ -76,17 +73,9 @@ def _messages_complete(
     system: str | None = None,
     max_pause_turns: int = 8,
 ) -> Any:
-    """Run Messages API until not pause_turn (web search / server tools may pause).
-
-    Uses **streaming** (`messages.stream`) — the Python SDK requires streaming for
-    requests that may exceed the non-streaming ~10 minute path when using large
-    budgets, thinking, and/or web search.
-    """
+    """Run Messages API with streaming until stop (handles web-search pauses)."""
     cur: list[dict[str, Any]] = list(message_list)
-    kwargs: dict[str, Any] = {
-        "model": model,
-        "max_tokens": max_tokens,
-    }
+    kwargs: dict[str, Any] = {"model": model, "max_tokens": max_tokens}
     if system:
         kwargs["system"] = system
     if thinking is not None:
@@ -101,16 +90,59 @@ def _messages_complete(
             for _ in stream.text_stream:
                 pass
             resp = stream.get_final_message()
-        reason = getattr(resp, "stop_reason", None)
-        if reason != "pause_turn":
+        if getattr(resp, "stop_reason", None) != "pause_turn":
             return resp
         cur.append({"role": "assistant", "content": resp.content})
-
     return resp
 
 
+_STRATEGY_DSL = """\
+Available strategy types (use these in your JSON):
+
+1. "threshold" — Buy YES first time price <= buy_below.
+   params: {"buy_below": <float 0.01–0.95>}
+   Economically: value-buy at fixed implied-probability ceiling.
+
+2. "momentum" — Buy when lookback-tick price change matches direction.
+   params: {"lookback": <int 2–30>, "buy_if_rising": <bool>}
+   Rising=true catches uptrends early; rising=false is contrarian.
+
+3. "early_threshold" — Threshold restricted to the first X% of the tradeable window.
+   params: {"buy_below": <float>, "entry_window_pct": <float 0.1–0.9>}
+   Forces early entry when information advantage is largest.
+
+4. "mean_reversion" — Buy after a ≥drop_pct fall from the rolling lookback-high.
+   params: {"drop_pct": <float 0.03–0.50>, "lookback": <int 3–20>}
+   Catches overreactions / panic sells.
+
+5. "relative_value" — Buy when price < (fair_value − edge_required).
+   params: {"fair_value": <float 0.30–0.70>, "edge_required": <float 0.01–0.20>}
+   Requires an explicit probability estimate — vary fair_value around the dataset base rate.
+
+6. "ma_crossover" — Buy when price drops below its window-tick MA by discount.
+   params: {"window": <int 3–30>, "discount": <float 0.01–0.20>}
+   Technical: price below moving average signals undervaluation.
+
+7. "hold" — No trade (flat baseline).
+   params: {}
+"""
+
+_ENGINE_NOTES = """\
+IMPORTANT — backtest engine realism (all applied automatically):
+• Resolution cutoff: the last 60 seconds of each market are INVISIBLE to strategies.
+  You cannot buy at price=0 near expiry — the engine removes those rows.
+• Slippage: +$0.005 is added to your entry price (models execution cost).
+• Taker fees: Polymarket fee schedule is applied per share on entry.
+• Strategies see ONLY (timestamp, price_yes) — never the outcome.
+• Metrics shown are from the TRAIN split (70% of markets by time).
+  A held-out TEST split (30%) is evaluated separately.
+• buy_below=0.0 will enter ~zero markets and earn nothing.
+  Use realistic thresholds (0.10–0.50) to actually trade.
+"""
+
+
 class ClaudeResearchClient:
-    """Thin wrapper around `anthropic.Anthropic` for strategy proposals."""
+    """Thin wrapper around ``anthropic.Anthropic`` for strategy proposals."""
 
     def __init__(
         self,
@@ -143,34 +175,36 @@ class ClaudeResearchClient:
         prior = json.dumps(prior_iterations, indent=2) if prior_iterations else "[]"
         exp_id = experiment_root or "(single experiment)"
         line = research_line_label or "this research line"
-        user = f"""Experiment isolation (mandatory):
-- This run is **standalone**: experiment directory `{exp_id}`, research line `{line}`.
-- Optimize **only** for the research task below. Do **not** align proposals with other parallel studies, other experiment folders, or any hypothetical "global best" PnL from elsewhere.
-- The "prior iterations" JSON below is **only** from **this** experiment on **this** dataset — it never includes results from other tasks, processes, or research tracks.
-- Do **not** pick a strategy because it might match outcomes from another unrelated study. Ground every proposal in **this** task text and **this** prior JSON only.
-- Web search (if used) is for **methods and theory** tied to **this** task — not to copy conclusions from unrelated experiments.
+
+        user = f"""\
+Experiment isolation (mandatory):
+- Standalone experiment: directory `{exp_id}`, research line `{line}`.
+- Optimise ONLY for the task below.  Do NOT align with other parallel experiments.
+- Prior iterations JSON is from THIS experiment only.
 
 Research task:
 {task}
 
-Domain reference (follow these mechanics):
+Domain reference:
 {domain}
 
-Research memory — prior iterations for **this experiment only** (newest last). Each entry has iteration number, candidate strategy metrics, and best_in_iteration.
-Use this to **avoid repeating** parameter sets that already failed or plateaued **within this run**; refine or explore new regions. Prefer diversity when prior winners are clear.
+{_ENGINE_NOTES}
+
+{_STRATEGY_DSL}
+
+Research memory — prior iterations (newest last):
 {prior}
 
-External knowledge: You have **web search** when enabled. Use it sparingly (a few queries per turn) to find **recent** approaches relevant to **this** task: academic papers, quant notes, prediction-market or binary-option research, GBM/digital formulations, and similar — then map findings into our JSON `threshold` / `momentum` / `hold` templates with realistic numeric params.
+Guidelines:
+- Study prior results carefully.  If a strategy type/param range plateaued, pivot to a DIFFERENT type or region.
+- Diversify: propose candidates across MULTIPLE strategy types, not just the current best.
+- Avoid "buy_below" near 0 — the resolution cutoff makes ultra-low thresholds ineffective.
+- Think about WHEN to enter (early vs mid-market), not just at what price.
+- Consider the dataset base rate (~50% YES) when setting fair_value / thresholds.
 
 Respond with ONLY a JSON array (no markdown fences, no commentary) of at most {max_strategies} objects.
-The **last** assistant text must be **only** valid JSON starting with `[` and ending with `]` — no words before or after.
-Each object must match: {{"type": "threshold" | "momentum" | "hold", "params": {{...}}}}
-Examples:
-- {{"type": "threshold", "params": {{"buy_below": 0.35}}}}
-- {{"type": "momentum", "params": {{"lookback": 3, "buy_if_rising": 1}}}}
-- {{"type": "hold", "params": {{}}}}
-
-Tune parameters using prior results; explore diverse candidates."""
+Each object: {{"type": "<type>", "params": {{...}}}}
+First character must be '[', last must be ']'."""
 
         thinking: dict[str, Any] | None = None
         if self._thinking_budget > 0:
@@ -189,9 +223,9 @@ Tune parameters using prior results; explore diverse candidates."""
         messages: list[dict[str, Any]] = [{"role": "user", "content": user}]
         system = (
             "You output strategy proposals as machine-readable JSON only. "
-            "The final user-visible assistant text must be a single JSON array and nothing else — "
-            "no markdown, no headings, no bullet lists, no explanation outside the array. "
-            "Each experiment is independent: do not assume or import strategy choices from other research lines."
+            "The final assistant text must be a single JSON array and nothing else — "
+            "no markdown, no headings, no explanation outside the array. "
+            "Each experiment is independent."
         )
 
         last_err: ValueError | None = None
@@ -208,57 +242,44 @@ Tune parameters using prior results; explore diverse candidates."""
 
             text = _extract_text_blocks(msg)
             if not text:
-                last_err = ValueError("Empty text in model response (no JSON to parse).")
+                last_err = ValueError("Empty text in model response.")
             else:
                 try:
                     raw_list = _extract_json_list(text)
-                    specs: list[StrategySpec] = []
-                    for item in raw_list:
-                        specs.append(StrategySpec.model_validate(item))
-                    return specs
+                    return [StrategySpec.model_validate(item) for item in raw_list]
                 except ValueError as e:
                     last_err = e
 
             if attempt == 0 and msg is not None:
                 messages.append({"role": "assistant", "content": getattr(msg, "content", [])})
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "Your reply was not a valid JSON array. "
-                            "Reply with ONLY a JSON array of strategy objects — "
-                            "the first character must be '[' and the last must be ']'. "
-                            "No other text."
-                        ),
-                    }
-                )
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Your reply was not a valid JSON array. "
+                        "Reply with ONLY a JSON array of strategy objects — "
+                        "first char '[', last char ']'. No other text."
+                    ),
+                })
 
         assert last_err is not None
-        # Third attempt: minimal prompt, no tools/thinking — turn prose + context into JSON only.
-        recovery_user = f"""You must output ONLY a JSON array (no markdown, no explanation).
 
-This experiment remains isolated (directory `{exp_id}`, line `{line}`). Do not mirror strategies from other parallel research runs.
+        recovery_user = f"""\
+You must output ONLY a JSON array (no markdown, no explanation).
+Experiment: directory `{exp_id}`, line `{line}`.
+
+{_STRATEGY_DSL}
+
+{_ENGINE_NOTES}
 
 Research task (reminder):
 {task[:6000]}
 
-Domain reference:
-{domain[:8000]}
-
-Prior iterations for this experiment only (JSON):
+Prior iterations (JSON):
 {prior[:20000]}
 
-The model previously answered with prose or invalid JSON. Using **only** this task, domain, and this prior JSON,
-propose up to {max_strategies} distinct strategy specs as ONE JSON array.
-Each element: {{"type": "threshold" | "momentum" | "hold", "params": {{...}}}}
-Examples: {{"type": "threshold", "params": {{"buy_below": 0.35}}}}, {{"type": "momentum", "params": {{"lookback": 3, "buy_if_rising": 1}}}}, {{"type": "hold", "params": {{}}}}.
+Propose up to {max_strategies} distinct strategy specs as ONE JSON array.
+First character '['. Last character ']'."""
 
-First character of your reply MUST be '['. Last character MUST be ']'."""
-
-        recovery_system = (
-            "Emit a single JSON array only. No keys but the array root. "
-            "No ``` fences. No text before or after the array."
-        )
         rec_msg = _messages_complete(
             self._client,
             model=self._model,
@@ -266,14 +287,13 @@ First character of your reply MUST be '['. Last character MUST be ']'."""
             max_tokens=min(16_384, int(self._max_output_tokens)),
             thinking=None,
             tools=None,
-            system=recovery_system,
+            system="Emit a single JSON array only. No fences. No text before or after.",
         )
         rec_text = _extract_text_blocks(rec_msg)
         if not rec_text:
             raise last_err
         try:
             raw_list = _extract_json_list(rec_text)
-            specs = [StrategySpec.model_validate(item) for item in raw_list]
-            return specs
+            return [StrategySpec.model_validate(item) for item in raw_list]
         except ValueError:
             raise last_err
