@@ -31,6 +31,16 @@ def _extract_json_list(text: str) -> list[Any]:
             return json.loads(m.group(0))
         except json.JSONDecodeError:
             pass
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(text):
+        if ch != "[":
+            continue
+        try:
+            obj, _end = decoder.raw_decode(text[i:])
+            if isinstance(obj, list):
+                return obj
+        except json.JSONDecodeError:
+            continue
     preview = text[:800] + ("…" if len(text) > 800 else "")
     raise ValueError(f"Could not parse JSON array from model response. Text preview:\n{preview}")
 
@@ -53,6 +63,7 @@ def _messages_complete(
     max_tokens: int,
     thinking: dict[str, Any] | None,
     tools: list[dict[str, Any]] | None,
+    system: str | None = None,
     max_pause_turns: int = 8,
 ) -> Any:
     """Run Messages API until not pause_turn (web search / server tools may pause).
@@ -66,6 +77,8 @@ def _messages_complete(
         "model": model,
         "max_tokens": max_tokens,
     }
+    if system:
+        kwargs["system"] = system
     if thinking is not None:
         kwargs["thinking"] = thinking
     if tools:
@@ -152,22 +165,50 @@ Tune parameters using prior results; explore diverse candidates."""
             ]
 
         messages: list[dict[str, Any]] = [{"role": "user", "content": user}]
-
-        msg = _messages_complete(
-            self._client,
-            model=self._model,
-            message_list=messages,
-            max_tokens=int(self._max_output_tokens),
-            thinking=thinking,
-            tools=tools,
+        system = (
+            "You output strategy proposals as machine-readable JSON only. "
+            "The final user-visible assistant text must be a single JSON array and nothing else — "
+            "no markdown, no headings, no bullet lists, no explanation outside the array."
         )
 
-        text = _extract_text_blocks(msg)
-        if not text:
-            raise ValueError("Empty text in model response (no JSON to parse).")
+        last_err: ValueError | None = None
+        for attempt in range(2):
+            msg = _messages_complete(
+                self._client,
+                model=self._model,
+                message_list=messages,
+                max_tokens=int(self._max_output_tokens),
+                thinking=thinking if attempt == 0 else None,
+                tools=tools if attempt == 0 else None,
+                system=system,
+            )
 
-        raw_list = _extract_json_list(text)
-        specs: list[StrategySpec] = []
-        for item in raw_list:
-            specs.append(StrategySpec.model_validate(item))
-        return specs
+            text = _extract_text_blocks(msg)
+            if not text:
+                last_err = ValueError("Empty text in model response (no JSON to parse).")
+            else:
+                try:
+                    raw_list = _extract_json_list(text)
+                    specs: list[StrategySpec] = []
+                    for item in raw_list:
+                        specs.append(StrategySpec.model_validate(item))
+                    return specs
+                except ValueError as e:
+                    last_err = e
+
+            if attempt == 0 and msg is not None:
+                messages.append({"role": "assistant", "content": getattr(msg, "content", [])})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your reply was not a valid JSON array. "
+                            "Reply with ONLY a JSON array of strategy objects — "
+                            "the first character must be '[' and the last must be ']'. "
+                            "No other text."
+                        ),
+                    }
+                )
+
+        assert last_err is not None
+        raise last_err
