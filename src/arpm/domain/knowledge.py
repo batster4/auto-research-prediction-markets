@@ -112,6 +112,11 @@ These rules are **always** in force. Any strategy proposal or parameter choice m
 
 When the execution engine only supports simple template strategies, still **design** parameters as if they were chosen by walk-forward rules on **past** data only—never as if the full future were visible.
 
+## Research agent protocol (memory + external reading)
+
+- Each iteration receives the **full history** of prior iterations (metrics per candidate and best-in_iteration). Use it to **avoid repeating** the same failed parameterizations and to **build on** what worked.
+- When **web search** is enabled, you may query for **recent** external work (papers, blogs, quant notes) relevant to the task—then **translate** insights into the supported JSON strategy templates, without inventing unavailable execution primitives.
+
 ## Research implications
 
 - Backtests must define **what each row means** (quote vs trade, whose side, fee structure).

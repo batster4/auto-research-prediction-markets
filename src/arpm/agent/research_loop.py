@@ -43,7 +43,14 @@ def run_research_experiment(
     if not dry_run:
         if not settings.anthropic_api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is not set. Use dry_run=True for offline testing.")
-        client = ClaudeResearchClient(api_key=settings.anthropic_api_key, model=settings.model)
+        client = ClaudeResearchClient(
+            api_key=settings.anthropic_api_key,
+            model=settings.model,
+            thinking_budget_tokens=settings.thinking_budget_tokens,
+            max_output_tokens=settings.max_output_tokens,
+            web_search_enabled=settings.web_search_enabled,
+            web_search_max_uses=settings.web_search_max_uses,
+        )
 
     prior: list[dict[str, Any]] = []
 

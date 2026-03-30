@@ -26,12 +26,67 @@ def _extract_json_list(text: str) -> list[Any]:
     raise ValueError("Could not parse JSON array from model response.")
 
 
+def _extract_text_blocks(msg: Any) -> str:
+    """Concatenate assistant text blocks (skip thinking / tool metadata)."""
+    parts: list[str] = []
+    for block in getattr(msg, "content", []) or []:
+        btype = getattr(block, "type", None)
+        if btype == "text":
+            parts.append(getattr(block, "text", "") or "")
+    return "\n".join(parts).strip()
+
+
+def _messages_complete(
+    client: anthropic.Anthropic,
+    *,
+    model: str,
+    message_list: list[dict[str, Any]],
+    max_tokens: int,
+    thinking: dict[str, Any] | None,
+    tools: list[dict[str, Any]] | None,
+    max_pause_turns: int = 8,
+) -> Any:
+    """Run Messages API until not pause_turn (web search / server tools may pause)."""
+    cur: list[dict[str, Any]] = list(message_list)
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "max_tokens": max_tokens,
+    }
+    if thinking is not None:
+        kwargs["thinking"] = thinking
+    if tools:
+        kwargs["tools"] = tools
+
+    for _ in range(max_pause_turns):
+        kwargs["messages"] = cur
+        resp = client.messages.create(**kwargs)
+        reason = getattr(resp, "stop_reason", None)
+        if reason != "pause_turn":
+            return resp
+        cur.append({"role": "assistant", "content": resp.content})
+
+    return resp
+
+
 class ClaudeResearchClient:
     """Thin wrapper around `anthropic.Anthropic` for strategy proposals."""
 
-    def __init__(self, api_key: str, model: str) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        *,
+        thinking_budget_tokens: int = 16_000,
+        max_output_tokens: int = 32_000,
+        web_search_enabled: bool = True,
+        web_search_max_uses: int = 5,
+    ) -> None:
         self._client = anthropic.Anthropic(api_key=api_key)
         self._model = model
+        self._thinking_budget = thinking_budget_tokens
+        self._max_output_tokens = max_output_tokens
+        self._web_search_enabled = web_search_enabled
+        self._web_search_max_uses = web_search_max_uses
 
     def propose_strategies(
         self,
@@ -48,8 +103,11 @@ class ClaudeResearchClient:
 Domain reference (follow these mechanics):
 {domain}
 
-Previous iteration results (newest last):
+Research memory — prior iterations (newest last). Each entry has iteration number, candidate strategy metrics, and best_in_iteration.
+Use this to **avoid repeating** parameter sets that already failed or plateaued; refine or explore new regions. Prefer diversity when prior winners are clear.
 {prior}
+
+External knowledge: You have **web search** when enabled. Use it sparingly (a few queries per turn) to find **recent** approaches: academic papers, quant notes, prediction-market or binary-option research, GBM/digital formulations, and similar — then map findings into our JSON `threshold` / `momentum` / `hold` templates with realistic numeric params.
 
 Respond with ONLY a JSON array (no markdown fences) of at most {max_strategies} objects.
 Each object must match: {{"type": "threshold" | "momentum" | "hold", "params": {{...}}}}
@@ -60,15 +118,35 @@ Examples:
 
 Tune parameters using prior results; explore diverse candidates."""
 
-        msg = self._client.messages.create(
+        thinking: dict[str, Any] | None = None
+        if self._thinking_budget > 0:
+            thinking = {"type": "enabled", "budget_tokens": int(self._thinking_budget)}
+
+        tools: list[dict[str, Any]] | None = None
+        if self._web_search_enabled and self._web_search_max_uses > 0:
+            tools = [
+                {
+                    "type": "web_search_20250305",
+                    "name": "web_search",
+                    "max_uses": int(self._web_search_max_uses),
+                }
+            ]
+
+        messages: list[dict[str, Any]] = [{"role": "user", "content": user}]
+
+        msg = _messages_complete(
+            self._client,
             model=self._model,
-            max_tokens=4096,
-            messages=[{"role": "user", "content": user}],
+            message_list=messages,
+            max_tokens=int(self._max_output_tokens),
+            thinking=thinking,
+            tools=tools,
         )
-        text = ""
-        for block in msg.content:
-            if block.type == "text":
-                text += block.text
+
+        text = _extract_text_blocks(msg)
+        if not text:
+            raise ValueError("Empty text in model response (no JSON to parse).")
+
         raw_list = _extract_json_list(text)
         specs: list[StrategySpec] = []
         for item in raw_list:

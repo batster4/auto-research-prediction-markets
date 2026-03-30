@@ -23,6 +23,9 @@ Base mechanics (definitions, shares, payouts, resolution, PnL) live in:
 |--------|---------|--------|
 | Max iterations per experiment | `100` | Upper bound on research cycles (`ARPM_MAX_ITERATIONS`) |
 | Max wall-clock per iteration | `300` s (5 min) | Each iteration must finish within this budget (`ARPM_MAX_SECONDS_PER_ITERATION`) |
+| Thinking budget | `16000` | Extended thinking (`ARPM_THINKING_BUDGET_TOKENS`; `0` disables) |
+| Max output tokens | `32000` | Must exceed thinking budget (`ARPM_MAX_OUTPUT_TOKENS`) |
+| Web search | on (`1`) | Server tool (`ARPM_WEB_SEARCH`; `ARPM_WEB_SEARCH_MAX_USES` default `5`) |
 
 The primary model ID is `claude-sonnet-4-6` (`ARPM_MODEL` overrides).
 

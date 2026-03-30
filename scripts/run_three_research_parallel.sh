@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 export PYTHONPATH="$ROOT/src"
-export ARPM_MAX_ITERATIONS="${ARPM_MAX_ITERATIONS:-20}"
+export ARPM_MAX_ITERATIONS="${ARPM_MAX_ITERATIONS:-100}"
 export ARPM_MAX_SECONDS_PER_ITERATION="${ARPM_MAX_SECONDS_PER_ITERATION:-300}"
 DATA="${ARPM_DATA:-$ROOT/data/arpm_c3_resolved_mar12plus_sample500k.csv}"
 PY="${PYTHON:-$ROOT/.venv/bin/python}"
