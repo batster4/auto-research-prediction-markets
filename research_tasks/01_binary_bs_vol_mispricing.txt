@@ -1,0 +1,13 @@
+Approach 1 — Binary / Black–Scholes style (5-minute BTC Up/Down windows)
+
+Context: Each 5-minute window behaves like a short-dated binary option on whether spot finishes above/below the strike. As time-to-expiry shrinks, even small BTC moves can swing fair probability; Polymarket YES prices can lag or overshoot.
+
+Execution / data constraint (fixed): Model all decisions as if there is exactly 1 second between observing the reference BTC / order book state and the Polymarket price you can actually trade at. Reflect this in thresholds (slightly more conservative entries/exits).
+
+Dataset: Canonical CSV passed via --data (high-frequency rows: timestamp, market_id, price_yes, outcome). price_yes is the implied YES probability/price from snapshots; outcome is resolved Up=1 / Down=0.
+
+Also use for reasoning (paths on this server): /root/research_data/obi_parquet/obi_download/data/ (OBI parquet), /root/research_data/5minML/ml/data/ (BTC/OBI feature parquet), raw JSONL under /root/polymarket-arb-bot/c3_snapshots/.
+
+Goal: Propose threshold/momentum/hold parameter sets that approximate: (a) buy YES when model fair value exceeds market by a margin, (b) exit or take profit when market overvalues YES vs fair, (c) or hold to resolution when edge is large enough vs fees. Explore several buy_below / lookback combinations consistent with rising vol near expiry and the 1s execution lag.
+
+Focus on economically sensible exploration; the backtest engine only evaluates built-in strategy templates—translate your ideas into concrete numeric params.

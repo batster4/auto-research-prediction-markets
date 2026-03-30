@@ -1,0 +1,9 @@
+Approach 2 — Last-second momentum / edge (GBM + Monte Carlo style)
+
+Context: In the final 30–60 seconds of each 5m window, compare model-implied P(Up) from BTC dynamics (e.g. GBM with drift from recent 1m trend, volatility from ATR or fixed ~0.5% for BTC) to Polymarket’s YES price. Medium-style recipe: simulate many paths, P(Up) ≈ fraction of paths with S_t ≥ S_0, or use the closed-form normal approximation analogous to a digital. Consider edge thresholds in the 5–10% range; position sizing ideas like fractional Kelly (reason in params, even if the engine only scores simple strategies).
+
+Execution / data constraint (fixed): Assume 1 second latency between the BTC snapshot you use and the executable Polymarket price—widen thresholds slightly vs a zero-lag model.
+
+Dataset: Same canonical CSV as --data (snapshots + resolutions). Supplementary: OBI parquet under /root/research_data/obi_parquet/, 5minML parquet under /root/research_data/5minML/ml/data/.
+
+Goal: Find threshold/momentum parameter combinations that mimic “late-window edge” behaviour—e.g. higher buy_below when simulated edge is large, or momentum that fires only when price_yes moves sharply in the last seconds. State clearly how params relate to edge and the 1s lag.

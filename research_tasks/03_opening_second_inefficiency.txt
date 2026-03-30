@@ -1,0 +1,9 @@
+Approach 3 — First seconds of the window: noise, mispricing, limit orders
+
+Context: Right after a new 5m window opens, Polymarket sometimes shows noisy or sticky prices (e.g. YES ~0.52 while the true short-horizon fair value is closer to 0.50). Traders sometimes post limits for 10–20s hoping to pick off mispricing.
+
+Execution / data constraint (fixed): Assume 1 second minimum delay between observing spot/book and the price you can trade; do not assume you can react faster than that.
+
+Dataset: Canonical CSV from --data (rows include early seconds via seconds_into_window in raw JSONL; the CSV still has one row per snapshot with price_yes). Cross-check intuition with raw JSONL in /root/polymarket-arb-bot/c3_snapshots/ and OBI parquet in /root/research_data/.
+
+Goal: Explore aggressive vs conservative threshold/momentum rules that target “opening” mispricing (e.g. only buy when price_yes is below a threshold in the first N seconds of a window—encode indirectly via buy_below and lookback so that the backtest can still run). Propose diverse variants; relate choices to noise, fees, and the 1s lag.
