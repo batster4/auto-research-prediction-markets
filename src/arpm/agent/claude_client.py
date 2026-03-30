@@ -46,7 +46,12 @@ def _messages_complete(
     tools: list[dict[str, Any]] | None,
     max_pause_turns: int = 8,
 ) -> Any:
-    """Run Messages API until not pause_turn (web search / server tools may pause)."""
+    """Run Messages API until not pause_turn (web search / server tools may pause).
+
+    Uses **streaming** (`messages.stream`) — the Python SDK requires streaming for
+    requests that may exceed the non-streaming ~10 minute path when using large
+    budgets, thinking, and/or web search.
+    """
     cur: list[dict[str, Any]] = list(message_list)
     kwargs: dict[str, Any] = {
         "model": model,
@@ -57,9 +62,13 @@ def _messages_complete(
     if tools:
         kwargs["tools"] = tools
 
+    resp: Any = None
     for _ in range(max_pause_turns):
         kwargs["messages"] = cur
-        resp = client.messages.create(**kwargs)
+        with client.messages.stream(**kwargs) as stream:
+            for _ in stream.text_stream:
+                pass
+            resp = stream.get_final_message()
         reason = getattr(resp, "stop_reason", None)
         if reason != "pause_turn":
             return resp
