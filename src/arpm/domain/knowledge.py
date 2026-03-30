@@ -100,10 +100,23 @@ Reference table (illustrative trade sizes; **fee in USDC** and **effective rate*
 
 For backtests and PnL: apply **taker** fees when modeling **aggressive** fills; **maker** fills incur **no** fee. When role (maker vs taker) is ambiguous in the data, state the assumption explicitly.
 
+## Immutable research methodology — lookahead, overfit, and backtest relevance
+
+These rules are **always** in force. Any strategy proposal or parameter choice must respect them so backtests and research conclusions stay **honest and deployable**.
+
+- **No lookahead bias:** Indicators, signals, thresholds, and entry/exit rules may use **only information that would have been knowable at the decision time** in live trading. Do **not** use future rows, final outcomes, post-hoc smoothed series, or “whole window” statistics unless you simulate obtaining them in real time (e.g. only past and current quotes). When in doubt, describe the **causal information set** explicitly.
+- **Avoid overfitting:** Do **not** tune many parameters on the **same** sample you report as performance. Prefer **simple** rules, fewer knobs, and **stability** across small parameter perturbations.
+- **Walk-forward and out-of-sample:** Research should assume **train / validation / test** style logic: fit or select ideas on an **early** segment of time, validate on a **middle** segment, and report **out-of-sample** behaviour on a **final** holdout period (or rolling **walk-forward** windows). The built-in loop may evaluate on one slice; still **phrase** proposals so they could be validated on **unseen** forward data.
+- **Regime and sample honesty:** Call out **non-stationarity** (volatility, liquidity, fees). Avoid claiming edge from a single regime unless you **stress** across subsamples.
+- **Reporting:** When comparing strategies, prefer metrics that degrade under overfitting (robustness, worst-window behaviour), not only peak **in-sample** PnL.
+
+When the execution engine only supports simple template strategies, still **design** parameters as if they were chosen by walk-forward rules on **past** data only—never as if the full future were visible.
+
 ## Research implications
 
 - Backtests must define **what each row means** (quote vs trade, whose side, fee structure).
 - Strategies should separate **signal** from **execution** and **risk** (position sizing).
+- Align proposed thresholds and lookbacks with the **immutable methodology** section above (no lookahead; plan for OOS / walk-forward).
 """
 
 
