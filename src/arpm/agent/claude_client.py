@@ -96,60 +96,78 @@ def _messages_complete(
     return resp
 
 
-_STRATEGY_DSL = """\
-Available strategy types (use these in your JSON):
+_STRATEGY_CATALOG: dict[str, str] = {
+    "threshold": """\
+"threshold" — Buy YES first time price <= buy_below.
+  params: {"buy_below": <float 0.01–0.95>}
+  Economically: value-buy at fixed implied-probability ceiling.""",
+    "momentum": """\
+"momentum" — Buy when lookback-tick price change matches direction.
+  params: {"lookback": <int 2–30>, "buy_if_rising": <bool>}
+  Rising=true catches uptrends early; rising=false is contrarian.""",
+    "early_threshold": """\
+"early_threshold" — Threshold restricted to the first X% of the tradeable window.
+  params: {"buy_below": <float>, "entry_window_pct": <float 0.1–0.9>}
+  Forces early entry when information advantage is largest.""",
+    "mean_reversion": """\
+"mean_reversion" — Buy after a ≥drop_pct fall from the rolling lookback-high.
+  params: {"drop_pct": <float 0.03–0.50>, "lookback": <int 3–20>}
+  Catches overreactions / panic sells.""",
+    "relative_value": """\
+"relative_value" — Buy when price < (fair_value − edge_required).
+  params: {"fair_value": <float 0.30–0.70>, "edge_required": <float 0.01–0.20>}
+  Requires an explicit probability estimate — vary fair_value around the dataset base rate.""",
+    "ma_crossover": """\
+"ma_crossover" — Buy when price drops below its window-tick MA by discount.
+  params: {"window": <int 3–30>, "discount": <float 0.01–0.20>}
+  Technical: price below moving average signals undervaluation.""",
+    "hold": """\
+"hold" — No trade (flat baseline).
+  params: {}""",
+    "bs_fair_value": """\
+"bs_fair_value" — Black-Scholes fair value: models the market as a binary call,
+  infers moneyness from opening price, re-prices with BS at each tick.
+  Buys when market price < fair_value − edge.
+  params: {"vol_annual": <float 0.3–2.0>, "edge_required": <float 0.01–0.15>,
+           "min_tte_pct": <float 0.1–0.8>, "max_tte_pct": <float 0.3–0.95>,
+           "warmup_ticks": <int 3–15>}
+  Key param: vol_annual is the annualised BTC volatility assumption (typical: 0.5–1.2).""",
+    "bs_overreaction": """\
+"bs_overreaction" — Buy when a price drop exceeds N standard deviations of
+  BS-predicted per-tick volatility (i.e. the market overreacted to a small move).
+  params: {"vol_annual": <float 0.3–2.0>, "z_threshold": <float 1.0–3.5>,
+           "vol_window": <int 5–20>}
+  Higher z_threshold = more selective but higher confidence.""",
+    "gamma_scalp": """\
+"gamma_scalp" — Buy near-ATM binary options (price ≈ 0.5 ± atm_band) after a dip.
+  Binary gamma peaks near ATM → small underlying moves cause large option swings
+  → market is prone to overreaction → buy the dip.
+  params: {"atm_band": <float 0.05–0.25>, "dip_threshold": <float 0.02–0.15>,
+           "max_tte_pct": <float 0.3–0.9>, "min_tte_pct": <float 0.1–0.6>,
+           "lookback": <int 3–15>}""",
+}
 
-1. "threshold" — Buy YES first time price <= buy_below.
-   params: {"buy_below": <float 0.01–0.95>}
-   Economically: value-buy at fixed implied-probability ceiling.
+GENERAL_TYPES = {"threshold", "momentum", "early_threshold", "mean_reversion",
+                 "relative_value", "ma_crossover", "hold"}
+BS_TYPES = {"bs_fair_value", "bs_overreaction", "gamma_scalp"}
 
-2. "momentum" — Buy when lookback-tick price change matches direction.
-   params: {"lookback": <int 2–30>, "buy_if_rising": <bool>}
-   Rising=true catches uptrends early; rising=false is contrarian.
 
-3. "early_threshold" — Threshold restricted to the first X% of the tradeable window.
-   params: {"buy_below": <float>, "entry_window_pct": <float 0.1–0.9>}
-   Forces early entry when information advantage is largest.
-
-4. "mean_reversion" — Buy after a ≥drop_pct fall from the rolling lookback-high.
-   params: {"drop_pct": <float 0.03–0.50>, "lookback": <int 3–20>}
-   Catches overreactions / panic sells.
-
-5. "relative_value" — Buy when price < (fair_value − edge_required).
-   params: {"fair_value": <float 0.30–0.70>, "edge_required": <float 0.01–0.20>}
-   Requires an explicit probability estimate — vary fair_value around the dataset base rate.
-
-6. "ma_crossover" — Buy when price drops below its window-tick MA by discount.
-   params: {"window": <int 3–30>, "discount": <float 0.01–0.20>}
-   Technical: price below moving average signals undervaluation.
-
-7. "hold" — No trade (flat baseline).
-   params: {}
-
---- BLACK-SCHOLES / BINARY OPTION STRATEGIES ---
-These use time_to_expiry_s (seconds until resolution) to price the binary option.
-
-8. "bs_fair_value" — Black-Scholes fair value: models the market as a binary call,
-   infers moneyness from opening price, re-prices with BS at each tick.
-   Buys when market price < fair_value − edge.
-   params: {"vol_annual": <float 0.3–2.0>, "edge_required": <float 0.01–0.15>,
-            "min_tte_pct": <float 0.1–0.8>, "max_tte_pct": <float 0.3–0.95>,
-            "warmup_ticks": <int 3–15>}
-   Key param: vol_annual is the annualised BTC volatility assumption (typical: 0.5–1.2).
-
-9. "bs_overreaction" — Buy when a price drop exceeds N standard deviations of
-   BS-predicted per-tick volatility (i.e. the market overreacted to a small move).
-   params: {"vol_annual": <float 0.3–2.0>, "z_threshold": <float 1.0–3.5>,
-            "vol_window": <int 5–20>}
-   Higher z_threshold = more selective but higher confidence.
-
-10. "gamma_scalp" — Buy near-ATM binary options (price ≈ 0.5 ± atm_band) after a dip.
-    Binary gamma peaks near ATM → small underlying moves cause large option swings
-    → market is prone to overreaction → buy the dip.
-    params: {"atm_band": <float 0.05–0.25>, "dip_threshold": <float 0.02–0.15>,
-             "max_tte_pct": <float 0.3–0.9>, "min_tte_pct": <float 0.1–0.6>,
-             "lookback": <int 3–15>}
-"""
+def _build_strategy_dsl(allowed_types: set[str] | None = None) -> str:
+    """Build the strategy DSL section, filtered to *allowed_types* if given."""
+    types_to_show = allowed_types or set(_STRATEGY_CATALOG.keys())
+    lines = ["Available strategy types (use ONLY these in your JSON):\n"]
+    idx = 1
+    for name in _STRATEGY_CATALOG:
+        if name not in types_to_show:
+            continue
+        lines.append(f"{idx}. {_STRATEGY_CATALOG[name]}\n")
+        idx += 1
+    if allowed_types:
+        lines.append(
+            f"You MUST ONLY use the {len(types_to_show)} types listed above. "
+            f"Any other type will be rejected.\n"
+        )
+    return "\n".join(lines)
 
 _ENGINE_NOTES = """\
 IMPORTANT — backtest engine realism (all applied automatically):
@@ -205,12 +223,19 @@ class ClaudeResearchClient:
         research_line_label: str = "",
         stagnation_warning: str | None = None,
         banned_types: set[str] | None = None,
+        allowed_types: set[str] | None = None,
     ) -> list[StrategySpec]:
         """Ask the model for a JSON array of strategy specs."""
         domain = get_domain_context()
         prior = json.dumps(prior_iterations, indent=2) if prior_iterations else "[]"
         exp_id = experiment_root or "(single experiment)"
         line = research_line_label or "this research line"
+
+        strategy_dsl = _build_strategy_dsl(allowed_types)
+
+        # Effective allowed set for diversity requirement
+        effective_n_types = len(allowed_types) if allowed_types else len(_STRATEGY_CATALOG)
+        min_diverse = min(3, effective_n_types)
 
         # Build dynamic blocks
         stagnation_block = ""
@@ -219,10 +244,12 @@ class ClaudeResearchClient:
 
         banned_block = ""
         if banned_types:
-            banned_block = (
-                f"\nBANNED STRATEGY TYPES (do NOT use): {', '.join(sorted(banned_types))}.\n"
-                f"Any candidate using a banned type will be automatically discarded.\n"
-            )
+            visible_banned = banned_types - (set() if allowed_types is None else (banned_types - allowed_types))
+            if visible_banned:
+                banned_block = (
+                    f"\nBANNED STRATEGY TYPES (do NOT use): {', '.join(sorted(visible_banned))}.\n"
+                    f"Any candidate using a banned type will be automatically discarded.\n"
+                )
 
         user = f"""\
 Experiment isolation (mandatory):
@@ -238,14 +265,14 @@ Domain reference:
 
 {_ENGINE_NOTES}
 
-{_STRATEGY_DSL}
+{strategy_dsl}
 
 Research memory — prior iterations (newest last):
 {prior}
 
 Guidelines:
 - Study prior results carefully.  If a strategy type/param range plateaued, pivot to a DIFFERENT type or region.
-- DIVERSITY REQUIREMENT: your {max_strategies} candidates MUST include at least 3 different strategy types.
+- DIVERSITY REQUIREMENT: your {max_strategies} candidates MUST include at least {min_diverse} different strategy types.
   Submitting 5 variations of the same type is wasteful — explore the strategy space broadly.
 - Pay attention to the "robustness" field in prior iterations:
   "weak"/"poor" = the strategy overfits training data. Do NOT keep refining it. Try something different.

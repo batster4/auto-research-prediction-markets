@@ -32,11 +32,22 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Run without Anthropic API (deterministic placeholder strategies)",
     )
+    p.add_argument(
+        "--allowed-types",
+        type=str,
+        default=None,
+        help="Comma-separated list of strategy types to allow (e.g. bs_fair_value,bs_overreaction,gamma_scalp)",
+    )
     args = p.parse_args(argv)
 
     task = args.task.strip()
     if args.task_file:
         task = Path(args.task_file).read_text(encoding="utf-8").strip()
+
+    allowed: set[str] | None = None
+    if args.allowed_types:
+        allowed = {t.strip() for t in args.allowed_types.split(",") if t.strip()}
+
     if args.resume:
         if task:
             p.error("Do not pass a task when using --resume (loaded from manifest)")
@@ -48,13 +59,16 @@ def main(argv: list[str] | None = None) -> int:
             Settings.from_env(),
             dry_run=args.dry_run,
             resume_from=args.resume,
+            allowed_types=allowed,
         )
     else:
         if not task:
             p.error("Provide a task string or --task-file")
         if not args.data:
             p.error("--data is required unless --resume")
-        paths = run_research_experiment(task, args.data, Settings.from_env(), dry_run=args.dry_run)
+        paths = run_research_experiment(
+            task, args.data, Settings.from_env(), dry_run=args.dry_run, allowed_types=allowed,
+        )
     print(f"Experiment directory: {paths.root}")
     return 0
 

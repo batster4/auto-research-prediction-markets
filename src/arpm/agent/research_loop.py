@@ -142,6 +142,7 @@ def run_research_experiment(
     dry_run: bool = False,
     *,
     resume_from: str | Path | None = None,
+    allowed_types: set[str] | None = None,
 ) -> ExperimentPaths:
     settings = settings or Settings.from_env()
     prior_full: list[dict[str, Any]] = []
@@ -174,6 +175,8 @@ def run_research_experiment(
         f"(cutoff={RESOLUTION_CUTOFF_S}s, slippage={SLIPPAGE}, fees=on)",
         flush=True,
     )
+    if allowed_types:
+        print(f"Allowed strategy types: {', '.join(sorted(allowed_types))}", flush=True)
     print(f"Max iterations: {settings.max_iterations}, budget per iteration: {settings.max_seconds_per_iteration}s", flush=True)
 
     client: ClaudeResearchClient | None = None
@@ -219,16 +222,21 @@ def run_research_experiment(
                 research_line_label=line,
                 stagnation_warning=stagnation_warning,
                 banned_types=banned_types,
+                allowed_types=allowed_types,
             )
 
-        # ── enforce ban: filter out banned strategy types ─────────────
-        if banned_types:
+        # ── enforce type restrictions ─────────────────────────────────
+        disallowed = (banned_types or set()) | (
+            set() if allowed_types is None
+            else {s.type for s in specs} - allowed_types
+        )
+        if disallowed:
             before = len(specs)
-            specs = [s for s in specs if s.type not in banned_types]
+            specs = [s for s in specs if s.type not in disallowed]
             if before > len(specs):
                 print(
-                    f"  Filtered {before - len(specs)} banned-type candidates "
-                    f"({', '.join(sorted(banned_types))}), {len(specs)} remain.",
+                    f"  Filtered {before - len(specs)} disallowed candidates "
+                    f"(types: {', '.join(sorted(disallowed))}), {len(specs)} remain.",
                     flush=True,
                 )
 
