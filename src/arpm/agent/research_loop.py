@@ -4,12 +4,16 @@ Key improvements over the original:
 - Temporal train / test split (LLM sees train metrics only; test metrics stored for analysis)
 - Resolution cutoff, fees, slippage via the backtest engine
 - Richer per-iteration metrics (n_entered, entry_rate, profit_factor, ROC …)
+- Stagnation detection: bans a strategy type if it wins N iterations in a row
+- Robustness feedback: qualitative label (strong/moderate/weak/poor) without leaking test PnL
+- Diversity enforcement: logged warning + prompt-level requirement for candidate variety
 """
 
 from __future__ import annotations
 
 import os
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +35,68 @@ from arpm.strategies.base import StrategySpec, strategy_from_spec
 RESOLUTION_CUTOFF_S = 60.0
 SLIPPAGE = 0.005
 TRAIN_PCT = 0.70
+STAGNATION_LOOKBACK = 3
+MIN_DISTINCT_TYPES = 3
 
+
+# ── Anti-stagnation helpers ───────────────────────────────────────────────
+
+def _detect_stagnation(
+    prior_for_llm: list[dict[str, Any]],
+    lookback: int = STAGNATION_LOOKBACK,
+) -> tuple[str | None, set[str]]:
+    """Return (warning_message, banned_types) if the search has stagnated.
+
+    Stagnation = the *same* strategy type won the last *lookback* iterations.
+    """
+    if len(prior_for_llm) < lookback:
+        return None, set()
+
+    recent_types: list[str] = []
+    for entry in prior_for_llm[-lookback:]:
+        best = entry.get("best_in_iteration")
+        if best and isinstance(best.get("strategy"), dict):
+            recent_types.append(best["strategy"].get("type", ""))
+
+    if len(recent_types) < lookback:
+        return None, set()
+
+    if len(set(recent_types)) == 1 and recent_types[0]:
+        stuck = recent_types[0]
+        warning = (
+            f"STAGNATION DETECTED: The last {lookback} iterations all selected "
+            f"'{stuck}'. This type is BANNED for this iteration. "
+            f"You MUST propose candidates using DIFFERENT strategy types. "
+            f"Explore underexplored types and parameter regions."
+        )
+        return warning, {stuck}
+
+    return None, set()
+
+
+def _robustness_label(train_pnl: float, test_pnl: float | None) -> str:
+    """Qualitative generalization label — does NOT reveal test PnL magnitude."""
+    if test_pnl is None:
+        return "unknown"
+    if train_pnl <= 0:
+        return "inconclusive"
+    ratio = test_pnl / max(train_pnl, 0.001)
+    if ratio > 0.3:
+        return "strong"
+    if ratio > 0.0:
+        return "moderate"
+    if ratio > -0.5:
+        return "weak"
+    return "poor"
+
+
+def _check_diversity(specs: list[StrategySpec], min_types: int = MIN_DISTINCT_TYPES) -> bool:
+    """Return True if candidates satisfy the diversity requirement."""
+    types = {s.type for s in specs}
+    return len(types) >= min(min_types, len(specs))
+
+
+# ── Record helpers ────────────────────────────────────────────────────────
 
 def _dry_run_specs(iteration: int) -> list[StrategySpec]:
     """Deterministic placeholder strategies when no API key is available."""
@@ -65,7 +130,7 @@ def _ev_to_record(spec: StrategySpec, ev: Any) -> dict[str, Any]:
 
 
 def _strip_test(prior_entry: dict[str, Any]) -> dict[str, Any]:
-    """Remove test_metrics from a prior record (for LLM consumption)."""
+    """Remove test_metrics from a prior record (keep robustness label)."""
     out = {k: v for k, v in prior_entry.items() if k != "test_metrics"}
     return out
 
@@ -137,6 +202,11 @@ def run_research_experiment(
         deadline = iter_start + settings.max_seconds_per_iteration
         print(f"\nIteration {iteration}/{settings.max_iterations} …", flush=True)
 
+        # ── stagnation detection ──────────────────────────────────────
+        stagnation_warning, banned_types = _detect_stagnation(prior_for_llm)
+        if stagnation_warning:
+            print(f"  ⚠ {stagnation_warning}", flush=True)
+
         if dry_run:
             specs = _dry_run_specs(iteration)
         else:
@@ -147,7 +217,31 @@ def run_research_experiment(
                 prior_for_llm,
                 experiment_root=str(paths.root.resolve()),
                 research_line_label=line,
+                stagnation_warning=stagnation_warning,
+                banned_types=banned_types,
             )
+
+        # ── enforce ban: filter out banned strategy types ─────────────
+        if banned_types:
+            before = len(specs)
+            specs = [s for s in specs if s.type not in banned_types]
+            if before > len(specs):
+                print(
+                    f"  Filtered {before - len(specs)} banned-type candidates "
+                    f"({', '.join(sorted(banned_types))}), {len(specs)} remain.",
+                    flush=True,
+                )
+
+        # ── log diversity ─────────────────────────────────────────────
+        if specs:
+            type_counts = Counter(s.type for s in specs)
+            diverse = _check_diversity(specs)
+            if not diverse:
+                print(
+                    f"  Low diversity: {dict(type_counts)} — "
+                    f"only {len(type_counts)} type(s) in {len(specs)} candidates.",
+                    flush=True,
+                )
 
         # ── evaluate candidates on TRAIN set ──────────────────────────
         iteration_records: list[dict[str, Any]] = []
@@ -192,13 +286,20 @@ def run_research_experiment(
 
         elapsed = time.monotonic() - iter_start
 
-        # ── record visible to LLM (train only) ───────────────────────
+        # ── robustness label (visible to LLM, no test numbers) ────────
+        robustness = _robustness_label(
+            best_rec["total_pnl"] if best_rec else 0.0,
+            test_metrics["total_pnl"] if test_metrics else None,
+        )
+
+        # ── record visible to LLM (train only + robustness) ──────────
         llm_record: dict[str, Any] = {
             "iteration": iteration,
             "elapsed_seconds": round(elapsed, 3),
             "within_time_budget": elapsed <= settings.max_seconds_per_iteration,
             "candidates": iteration_records,
             "best_in_iteration": best_rec,
+            "robustness": robustness,
         }
         prior_for_llm.append(llm_record)
 
@@ -211,7 +312,8 @@ def run_research_experiment(
         test_pnl = test_metrics["total_pnl"] if test_metrics else "n/a"
         print(
             f"Iteration {iteration} done: {len(iteration_records)} candidates | "
-            f"train best PnL={best_pnl} | test PnL={test_pnl}",
+            f"train best PnL={best_pnl} | test PnL={test_pnl} | "
+            f"robustness={robustness}",
             flush=True,
         )
 

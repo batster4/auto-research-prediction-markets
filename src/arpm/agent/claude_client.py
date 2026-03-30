@@ -160,9 +160,18 @@ IMPORTANT — backtest engine realism (all applied automatically):
 • Strategies see (timestamp, price_yes, time_to_expiry_s) — never the outcome.
   time_to_expiry_s = seconds until market resolution (parsed from market_id).
 • Metrics shown are from the TRAIN split (70% of markets by time).
-  A held-out TEST split (30%) is evaluated separately.
+  A held-out TEST split (30%) is evaluated separately — you NEVER see test numbers.
 • buy_below=0.0 will enter ~zero markets and earn nothing.
   Use realistic thresholds (0.10–0.50) to actually trade.
+
+ROBUSTNESS FIELD (in each iteration record):
+  Each past iteration includes a "robustness" label: strong / moderate / weak / poor.
+  This tells you how well the best strategy generalised to unseen test data:
+    strong   = generalises very well — refine this direction
+    moderate = somewhat positive on test — promising, keep exploring
+    weak     = marginal or slightly negative on test — likely overfitting, pivot
+    poor     = significantly negative on test — overfitting confirmed, STOP refining, change approach
+  If recent iterations show "weak"/"poor", you MUST try fundamentally different strategies.
 """
 
 
@@ -194,6 +203,8 @@ class ClaudeResearchClient:
         *,
         experiment_root: str = "",
         research_line_label: str = "",
+        stagnation_warning: str | None = None,
+        banned_types: set[str] | None = None,
     ) -> list[StrategySpec]:
         """Ask the model for a JSON array of strategy specs."""
         domain = get_domain_context()
@@ -201,12 +212,24 @@ class ClaudeResearchClient:
         exp_id = experiment_root or "(single experiment)"
         line = research_line_label or "this research line"
 
+        # Build dynamic blocks
+        stagnation_block = ""
+        if stagnation_warning:
+            stagnation_block = f"\n⚠️ {stagnation_warning}\n"
+
+        banned_block = ""
+        if banned_types:
+            banned_block = (
+                f"\nBANNED STRATEGY TYPES (do NOT use): {', '.join(sorted(banned_types))}.\n"
+                f"Any candidate using a banned type will be automatically discarded.\n"
+            )
+
         user = f"""\
 Experiment isolation (mandatory):
 - Standalone experiment: directory `{exp_id}`, research line `{line}`.
 - Optimise ONLY for the task below.  Do NOT align with other parallel experiments.
 - Prior iterations JSON is from THIS experiment only.
-
+{stagnation_block}{banned_block}
 Research task:
 {task}
 
@@ -222,7 +245,11 @@ Research memory — prior iterations (newest last):
 
 Guidelines:
 - Study prior results carefully.  If a strategy type/param range plateaued, pivot to a DIFFERENT type or region.
-- Diversify: propose candidates across MULTIPLE strategy types, not just the current best.
+- DIVERSITY REQUIREMENT: your {max_strategies} candidates MUST include at least 3 different strategy types.
+  Submitting 5 variations of the same type is wasteful — explore the strategy space broadly.
+- Pay attention to the "robustness" field in prior iterations:
+  "weak"/"poor" = the strategy overfits training data. Do NOT keep refining it. Try something different.
+  "strong"/"moderate" = promising direction, but still diversify your other candidates.
 - Avoid "buy_below" near 0 — the resolution cutoff makes ultra-low thresholds ineffective.
 - Think about WHEN to enter (early vs mid-market), not just at what price.
 - Consider the dataset base rate (~50% YES) when setting fair_value / thresholds.
