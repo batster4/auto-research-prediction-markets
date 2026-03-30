@@ -38,6 +38,8 @@ def run_research_experiment(
     dataset_path = Path(dataset_path)
     trades = load_trades_table(dataset_path)
     paths = create_experiment(task, dataset_path, experiments_dir=settings.experiments_dir)
+    print(f"Experiment directory: {paths.root}", flush=True)
+    print(f"Max iterations: {settings.max_iterations}, budget per iteration: {settings.max_seconds_per_iteration}s", flush=True)
 
     client: ClaudeResearchClient | None = None
     if not dry_run:
@@ -57,6 +59,7 @@ def run_research_experiment(
     for iteration in range(1, settings.max_iterations + 1):
         iter_start = time.monotonic()
         deadline = iter_start + settings.max_seconds_per_iteration
+        print(f"Iteration {iteration}/{settings.max_iterations} …", flush=True)
 
         if dry_run:
             specs = _dry_run_specs(iteration)
@@ -97,8 +100,14 @@ def run_research_experiment(
         }
         prior.append(out)
         append_iteration(paths, out)
+        print(
+            f"Iteration {iteration} done: {len(iteration_records)} candidates, best total_pnl="
+            f"{best['total_pnl'] if best else 'n/a'}",
+            flush=True,
+        )
 
         if elapsed > settings.max_seconds_per_iteration:
             break
 
+    print(f"Finished. Experiment directory: {paths.root}", flush=True)
     return paths

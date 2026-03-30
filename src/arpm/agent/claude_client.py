@@ -32,6 +32,16 @@ def _extract_json_list(text: str) -> list[Any]:
         except json.JSONDecodeError:
             pass
     decoder = json.JSONDecoder()
+    # Prefer a JSON array at the **end** of the reply (models often append it after prose).
+    for i in range(len(text) - 1, -1, -1):
+        if text[i] != "[":
+            continue
+        try:
+            obj, _end = decoder.raw_decode(text[i:])
+            if isinstance(obj, list):
+                return obj
+        except json.JSONDecodeError:
+            continue
     for i, ch in enumerate(text):
         if ch != "[":
             continue
@@ -211,4 +221,44 @@ Tune parameters using prior results; explore diverse candidates."""
                 )
 
         assert last_err is not None
-        raise last_err
+        # Third attempt: minimal prompt, no tools/thinking — turn prose + context into JSON only.
+        recovery_user = f"""You must output ONLY a JSON array (no markdown, no explanation).
+
+Research task (reminder):
+{task[:6000]}
+
+Domain reference:
+{domain[:8000]}
+
+Prior iterations (JSON):
+{prior[:20000]}
+
+The model previously answered with prose or invalid JSON. Using the task, domain, and prior results,
+propose up to {max_strategies} distinct strategy specs as ONE JSON array.
+Each element: {{"type": "threshold" | "momentum" | "hold", "params": {{...}}}}
+Examples: {{"type": "threshold", "params": {{"buy_below": 0.35}}}}, {{"type": "momentum", "params": {{"lookback": 3, "buy_if_rising": 1}}}}, {{"type": "hold", "params": {{}}}}.
+
+First character of your reply MUST be '['. Last character MUST be ']'."""
+
+        recovery_system = (
+            "Emit a single JSON array only. No keys but the array root. "
+            "No ``` fences. No text before or after the array."
+        )
+        rec_msg = _messages_complete(
+            self._client,
+            model=self._model,
+            message_list=[{"role": "user", "content": recovery_user}],
+            max_tokens=min(16_384, int(self._max_output_tokens)),
+            thinking=None,
+            tools=None,
+            system=recovery_system,
+        )
+        rec_text = _extract_text_blocks(rec_msg)
+        if not rec_text:
+            raise last_err
+        try:
+            raw_list = _extract_json_list(rec_text)
+            specs = [StrategySpec.model_validate(item) for item in raw_list]
+            return specs
+        except ValueError:
+            raise last_err
