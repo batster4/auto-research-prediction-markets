@@ -109,9 +109,10 @@ def run_backtest(
 
         # Add time-to-expiry column (seconds until resolution).
         # BS-aware strategies use this; others just ignore it.
+        # market_id timestamp is the WINDOW START; resolution = start + 300s.
         res_unix = _parse_resolution_unix(str(mid))
         if res_unix is not None:
-            res_ts = pd.Timestamp(res_unix, unit="s", tz="UTC")
+            res_ts = pd.Timestamp(res_unix + 300, unit="s", tz="UTC")
         else:
             res_ts = last_ts
         tradeable["time_to_expiry_s"] = (
