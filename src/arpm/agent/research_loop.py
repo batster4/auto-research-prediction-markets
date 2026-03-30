@@ -12,7 +12,13 @@ from arpm.backtest.engine import run_backtest
 from arpm.config import Settings
 from arpm.data.loaders import load_trades_table
 from arpm.evaluation.metrics import evaluate_returns
-from arpm.experiments.store import ExperimentPaths, append_iteration, create_experiment
+from arpm.experiments.store import (
+    ExperimentPaths,
+    append_iteration,
+    create_experiment,
+    load_prior_iterations,
+    open_existing_experiment,
+)
 from arpm.strategies.base import StrategySpec, strategy_from_spec
 
 
@@ -27,19 +33,41 @@ def _dry_run_specs(iteration: int) -> list[StrategySpec]:
 
 def run_research_experiment(
     task: str,
-    dataset_path: str | Path,
+    dataset_path: str | Path | None,
     settings: Settings | None = None,
     dry_run: bool = False,
+    *,
+    resume_from: str | Path | None = None,
 ) -> ExperimentPaths:
     """
     Load data, run up to `max_iterations` research iterations.
     Each iteration has a wall-clock budget of `max_seconds_per_iteration` seconds.
+    If `resume_from` is set, continue appending to that experiment's `iterations.jsonl`
+    (task and dataset are taken from its manifest).
     """
     settings = settings or Settings.from_env()
-    dataset_path = Path(dataset_path)
-    trades = load_trades_table(dataset_path)
-    paths = create_experiment(task, dataset_path, experiments_dir=settings.experiments_dir)
-    print(f"Experiment directory: {paths.root}", flush=True)
+    prior: list[dict[str, Any]] = []
+
+    if resume_from is not None:
+        paths, task, ds = open_existing_experiment(resume_from)
+        dataset_path = Path(ds).resolve()
+        if not dataset_path.is_file():
+            raise FileNotFoundError(f"Dataset from manifest not found: {dataset_path}")
+        trades = load_trades_table(dataset_path)
+        prior = load_prior_iterations(paths)
+        done = len(prior)
+        print(f"Resuming experiment: {paths.root}", flush=True)
+        print(f"Loaded {done} prior iterations; continuing to {settings.max_iterations}.", flush=True)
+    else:
+        if not task or not task.strip():
+            raise ValueError("task is required when not resuming")
+        if dataset_path is None:
+            raise ValueError("dataset_path is required when not resuming")
+        dataset_path = Path(dataset_path)
+        trades = load_trades_table(dataset_path)
+        paths = create_experiment(task, dataset_path, experiments_dir=settings.experiments_dir)
+        print(f"Experiment directory: {paths.root}", flush=True)
+
     print(f"Max iterations: {settings.max_iterations}, budget per iteration: {settings.max_seconds_per_iteration}s", flush=True)
 
     client: ClaudeResearchClient | None = None
@@ -55,9 +83,12 @@ def run_research_experiment(
             web_search_max_uses=settings.web_search_max_uses,
         )
 
-    prior: list[dict[str, Any]] = []
+    start_iter = len(prior) + 1
+    if start_iter > settings.max_iterations:
+        print(f"Nothing to do: already have {len(prior)} iterations (max {settings.max_iterations}).", flush=True)
+        return paths
 
-    for iteration in range(1, settings.max_iterations + 1):
+    for iteration in range(start_iter, settings.max_iterations + 1):
         iter_start = time.monotonic()
         deadline = iter_start + settings.max_seconds_per_iteration
         print(f"Iteration {iteration}/{settings.max_iterations} …", flush=True)
