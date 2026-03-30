@@ -6,6 +6,11 @@ dist/
 wheels/
 *.egg-info
 
+# Secrets (never commit)
+.env
+.env.local
+*.pem
+
 # Virtual environments
 .venv
 worktrees/
