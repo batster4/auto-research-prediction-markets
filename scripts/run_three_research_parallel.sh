@@ -21,6 +21,7 @@ run_one() {
     ARPM_MAX_ITERATIONS="$ARPM_MAX_ITERATIONS" \
     ARPM_MAX_SECONDS_PER_ITERATION="$ARPM_MAX_SECONDS_PER_ITERATION" \
     PYTHONPATH="$ROOT/src" \
+    PYTHONUNBUFFERED=1 \
     "$PY" -m arpm --task-file "$taskfile" --data "$DATA" \
     >"$log" 2>&1 &
   echo "PID $!  log $log  experiments -> $expdir"

@@ -14,16 +14,25 @@ from arpm.strategies.base import StrategySpec
 
 def _extract_json_list(text: str) -> list[Any]:
     text = text.strip()
+    # Strip optional markdown fences (model sometimes wraps JSON)
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```\s*$", "", text)
+    text = text.strip()
     try:
         data = json.loads(text)
         if isinstance(data, list):
             return data
     except json.JSONDecodeError:
         pass
+    # First [ ... ] span (non-greedy inner match can fail on nested strings; try last resort)
     m = re.search(r"\[[\s\S]*\]", text)
     if m:
-        return json.loads(m.group(0))
-    raise ValueError("Could not parse JSON array from model response.")
+        try:
+            return json.loads(m.group(0))
+        except json.JSONDecodeError:
+            pass
+    preview = text[:800] + ("…" if len(text) > 800 else "")
+    raise ValueError(f"Could not parse JSON array from model response. Text preview:\n{preview}")
 
 
 def _extract_text_blocks(msg: Any) -> str:
@@ -118,7 +127,8 @@ Use this to **avoid repeating** parameter sets that already failed or plateaued;
 
 External knowledge: You have **web search** when enabled. Use it sparingly (a few queries per turn) to find **recent** approaches: academic papers, quant notes, prediction-market or binary-option research, GBM/digital formulations, and similar — then map findings into our JSON `threshold` / `momentum` / `hold` templates with realistic numeric params.
 
-Respond with ONLY a JSON array (no markdown fences) of at most {max_strategies} objects.
+Respond with ONLY a JSON array (no markdown fences, no commentary) of at most {max_strategies} objects.
+The **last** assistant text must be **only** valid JSON starting with `[` and ending with `]` — no words before or after.
 Each object must match: {{"type": "threshold" | "momentum" | "hold", "params": {{...}}}}
 Examples:
 - {{"type": "threshold", "params": {{"buy_below": 0.35}}}}
