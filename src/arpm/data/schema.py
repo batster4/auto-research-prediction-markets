@@ -36,8 +36,11 @@ def normalize_trades_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     out = out.copy()
     out["timestamp"] = pd.to_datetime(out["timestamp"], utc=True, errors="coerce")
-    if out["timestamp"].isna().any():
-        raise ValueError("Invalid timestamp values present.")
+    bad_ts = out["timestamp"].isna()
+    if bad_ts.all():
+        raise ValueError("Invalid timestamp values present (all rows).")
+    if bad_ts.any():
+        out = out.loc[~bad_ts].copy()
 
     out["market_id"] = out["market_id"].astype(str)
     out["price_yes"] = pd.to_numeric(out["price_yes"], errors="coerce")
