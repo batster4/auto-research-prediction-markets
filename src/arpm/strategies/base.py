@@ -49,6 +49,9 @@ STRATEGY_TYPES = Literal[
     "mean_reversion",
     "relative_value",
     "ma_crossover",
+    "bs_fair_value",
+    "bs_overreaction",
+    "gamma_scalp",
 ]
 
 
@@ -64,7 +67,10 @@ class StrategySpec(BaseModel):
 def strategy_from_spec(spec: StrategySpec) -> Strategy:
     """Instantiate a built-in strategy from a spec."""
     from arpm.strategies.builtin import (
+        BSFairValueStrategy,
+        BSOverreactionStrategy,
         EarlyThresholdStrategy,
+        GammaScalpStrategy,
         HoldStrategy,
         MACrossoverStrategy,
         MeanReversionStrategy,
@@ -111,5 +117,27 @@ def strategy_from_spec(spec: StrategySpec) -> Strategy:
         return MACrossoverStrategy(
             window=int(p.get("window", 10)),
             discount=float(p.get("discount", 0.05)),
+        )
+    if t == "bs_fair_value":
+        return BSFairValueStrategy(
+            vol_annual=float(p.get("vol_annual", 0.80)),
+            edge_required=float(p.get("edge_required", 0.05)),
+            min_tte_pct=float(p.get("min_tte_pct", 0.20)),
+            max_tte_pct=float(p.get("max_tte_pct", 0.80)),
+            warmup_ticks=int(p.get("warmup_ticks", 5)),
+        )
+    if t == "bs_overreaction":
+        return BSOverreactionStrategy(
+            vol_annual=float(p.get("vol_annual", 0.80)),
+            z_threshold=float(p.get("z_threshold", 2.0)),
+            vol_window=int(p.get("vol_window", 10)),
+        )
+    if t == "gamma_scalp":
+        return GammaScalpStrategy(
+            atm_band=float(p.get("atm_band", 0.15)),
+            dip_threshold=float(p.get("dip_threshold", 0.05)),
+            max_tte_pct=float(p.get("max_tte_pct", 0.75)),
+            min_tte_pct=float(p.get("min_tte_pct", 0.15)),
+            lookback=int(p.get("lookback", 5)),
         )
     raise ValueError(f"Unknown strategy type: {t}")

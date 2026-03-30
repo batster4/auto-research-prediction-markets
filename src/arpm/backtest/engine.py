@@ -12,6 +12,17 @@ from arpm.backtest.fees import taker_fee_per_share
 from arpm.strategies.base import Strategy
 
 
+def _parse_resolution_unix(market_id: str) -> int | None:
+    """Extract resolution unix timestamp from IDs like ``btc-updown-5m-1773573000``."""
+    parts = str(market_id).rsplit("-", 1)
+    if len(parts) == 2:
+        try:
+            return int(parts[-1])
+        except ValueError:
+            return None
+    return None
+
+
 @dataclass(frozen=True)
 class MarketTradeResult:
     """Result for one market."""
@@ -88,6 +99,23 @@ def run_backtest(
             sorted_rows
             .loc[sorted_rows["timestamp"] <= cutoff_ts, ["timestamp", "price_yes"]]
             .copy()
+        )
+
+        if tradeable.empty:
+            results.append(MarketTradeResult(
+                market_id=str(mid), outcome=outcome, entered=False,
+            ))
+            continue
+
+        # Add time-to-expiry column (seconds until resolution).
+        # BS-aware strategies use this; others just ignore it.
+        res_unix = _parse_resolution_unix(str(mid))
+        if res_unix is not None:
+            res_ts = pd.Timestamp(res_unix, unit="s", tz="UTC")
+        else:
+            res_ts = last_ts
+        tradeable["time_to_expiry_s"] = (
+            (res_ts - tradeable["timestamp"]).dt.total_seconds()
         )
 
         if tradeable.empty:

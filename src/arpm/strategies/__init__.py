@@ -1,6 +1,9 @@
 from arpm.strategies.base import EntrySignal, Strategy, StrategySpec, strategy_from_spec
 from arpm.strategies.builtin import (
+    BSFairValueStrategy,
+    BSOverreactionStrategy,
     EarlyThresholdStrategy,
+    GammaScalpStrategy,
     HoldStrategy,
     MACrossoverStrategy,
     MeanReversionStrategy,
@@ -21,4 +24,7 @@ __all__ = [
     "MeanReversionStrategy",
     "RelativeValueStrategy",
     "MACrossoverStrategy",
+    "BSFairValueStrategy",
+    "BSOverreactionStrategy",
+    "GammaScalpStrategy",
 ]

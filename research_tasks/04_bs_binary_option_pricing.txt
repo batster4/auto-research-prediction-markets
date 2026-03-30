@@ -1,0 +1,48 @@
+Approach 4 — Black-Scholes Binary Option Pricing (5-minute BTC Up/Down)
+
+Core premise: Each 5-minute BTC up/down market on Polymarket is economically identical to a
+short-dated BINARY CALL OPTION. The BS framework for digital/cash-or-nothing options gives us
+a theoretical fair value based on:
+  - Moneyness (ln S/K, inferred from price_yes trajectory)
+  - Time to expiry (parsed from market_id unix timestamp)
+  - Volatility (estimated from realised price_yes movements)
+
+The idea: Polymarket participants may misprice these binary options relative to their BS-fair
+value.  Sources of mispricing include:
+  (a) Incorrect implied volatility — market over/under-estimates BTC vol near expiry.
+  (b) Overreaction to price moves — binary option gamma peaks near ATM; small BTC moves cause
+      large price_yes swings, and the market may overshoot the BS-fair adjustment.
+  (c) Time-value decay blindness — as time passes, an ATM binary option should stay near 0.5,
+      but the market may push it too low too early (or too high).
+
+Strategy toolkit (prioritise these — all three are BS-aware and use time_to_expiry_s):
+  • "bs_fair_value" — Compute BS fair price from opening moneyness + vol + time remaining.
+    Buy when market price is below fair by at least edge_required.
+    KEY PARAM: vol_annual (annualised BTC vol; start around 0.60–1.00, explore 0.3–2.0).
+  • "bs_overreaction" — Buy when a price drop exceeds z_threshold standard deviations of the
+    BS-predicted per-tick volatility.  Calibrated mean-reversion: the "mean" and "sigma" come
+    from BS, not arbitrary lookback.
+  • "gamma_scalp" — Buy near-ATM options (price ≈ 0.5 ± band) after a dip.  Near ATM, gamma
+    is highest → overreaction is most likely → dip-buying has the best risk/reward.
+
+You may also use the general strategies (threshold, momentum, mean_reversion, etc.) when
+they express a BS-grounded idea — e.g. a relative_value strategy where fair_value is set based
+on the ~50% base rate and a specific vol assumption.
+
+Dataset: High-frequency CSV (timestamp, market_id, price_yes, outcome).
+  • market_id format: btc-updown-5m-UNIXTS — the unix timestamp IS the resolution time.
+  • ~100-120 ticks per market over 5 minutes.
+  • Base rate: ~50% YES.
+
+Execution constraints (enforced by engine):
+  • Last 60 seconds before resolution are INVISIBLE (resolution cutoff).
+  • Slippage: +$0.005/share.  Taker fees: Polymarket schedule.
+  • Metrics are on a 70% TRAIN split; 30% held out for TEST.
+
+Research directions to explore (non-exhaustive):
+  1. Calibrate vol_annual: try 0.40, 0.60, 0.80, 1.00, 1.50 — which gives best OOS PnL?
+  2. Edge size: how much edge_required (0.02–0.12) produces the best Sharpe?
+  3. Timing: is it better to trade early (min_tte_pct high) or mid-market?
+  4. Combine BS with momentum: buy only when BS says cheap AND momentum is rising.
+  5. Compare gamma_scalp selectivity (ATM band width, dip size) vs bs_fair_value.
+  6. Does bs_overreaction (z_threshold sweep) capture real alpha or just noise?

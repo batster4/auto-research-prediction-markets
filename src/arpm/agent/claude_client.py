@@ -125,6 +125,30 @@ Available strategy types (use these in your JSON):
 
 7. "hold" — No trade (flat baseline).
    params: {}
+
+--- BLACK-SCHOLES / BINARY OPTION STRATEGIES ---
+These use time_to_expiry_s (seconds until resolution) to price the binary option.
+
+8. "bs_fair_value" — Black-Scholes fair value: models the market as a binary call,
+   infers moneyness from opening price, re-prices with BS at each tick.
+   Buys when market price < fair_value − edge.
+   params: {"vol_annual": <float 0.3–2.0>, "edge_required": <float 0.01–0.15>,
+            "min_tte_pct": <float 0.1–0.8>, "max_tte_pct": <float 0.3–0.95>,
+            "warmup_ticks": <int 3–15>}
+   Key param: vol_annual is the annualised BTC volatility assumption (typical: 0.5–1.2).
+
+9. "bs_overreaction" — Buy when a price drop exceeds N standard deviations of
+   BS-predicted per-tick volatility (i.e. the market overreacted to a small move).
+   params: {"vol_annual": <float 0.3–2.0>, "z_threshold": <float 1.0–3.5>,
+            "vol_window": <int 5–20>}
+   Higher z_threshold = more selective but higher confidence.
+
+10. "gamma_scalp" — Buy near-ATM binary options (price ≈ 0.5 ± atm_band) after a dip.
+    Binary gamma peaks near ATM → small underlying moves cause large option swings
+    → market is prone to overreaction → buy the dip.
+    params: {"atm_band": <float 0.05–0.25>, "dip_threshold": <float 0.02–0.15>,
+             "max_tte_pct": <float 0.3–0.9>, "min_tte_pct": <float 0.1–0.6>,
+             "lookback": <int 3–15>}
 """
 
 _ENGINE_NOTES = """\
@@ -133,7 +157,8 @@ IMPORTANT — backtest engine realism (all applied automatically):
   You cannot buy at price=0 near expiry — the engine removes those rows.
 • Slippage: +$0.005 is added to your entry price (models execution cost).
 • Taker fees: Polymarket fee schedule is applied per share on entry.
-• Strategies see ONLY (timestamp, price_yes) — never the outcome.
+• Strategies see (timestamp, price_yes, time_to_expiry_s) — never the outcome.
+  time_to_expiry_s = seconds until market resolution (parsed from market_id).
 • Metrics shown are from the TRAIN split (70% of markets by time).
   A held-out TEST split (30%) is evaluated separately.
 • buy_below=0.0 will enter ~zero markets and earn nothing.
