@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import time
 from collections import Counter
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -41,19 +42,21 @@ MIN_DISTINCT_TYPES = 3
 
 # ── Anti-stagnation helpers ───────────────────────────────────────────────
 
+@dataclass
+class StagnationResult:
+    warning: str | None = None
+    banned_types: set[str] = field(default_factory=set)
+    banned_params: dict[str, Any] | None = None
+
+
 def _detect_stagnation(
     prior_for_llm: list[dict[str, Any]],
     lookback: int = STAGNATION_LOOKBACK,
     allowed_types: set[str] | None = None,
-) -> tuple[str | None, set[str]]:
-    """Return (warning_message, banned_types) if the search has stagnated.
-
-    Stagnation = the *same* strategy type won the last *lookback* iterations.
-    When only 1 type is allowed, we can't ban it — instead we detect *parameter*
-    stagnation and demand radically different param values.
-    """
+) -> StagnationResult:
+    """Detect search stagnation — type-level or parameter-level."""
     if len(prior_for_llm) < lookback:
-        return None, set()
+        return StagnationResult()
 
     recent_types: list[str] = []
     recent_params: list[dict] = []
@@ -64,39 +67,42 @@ def _detect_stagnation(
             recent_params.append(best["strategy"].get("params", {}))
 
     if len(recent_types) < lookback:
-        return None, set()
+        return StagnationResult()
 
     if len(set(recent_types)) != 1 or not recent_types[0]:
-        return None, set()
+        return StagnationResult()
 
     stuck = recent_types[0]
     can_ban = allowed_types is None or len(allowed_types) > 1
 
     if can_ban:
-        warning = (
-            f"STAGNATION DETECTED: The last {lookback} iterations all selected "
-            f"'{stuck}'. This type is BANNED for this iteration. "
-            f"You MUST propose candidates using DIFFERENT strategy types. "
-            f"Explore underexplored types and parameter regions."
+        return StagnationResult(
+            warning=(
+                f"STAGNATION DETECTED: The last {lookback} iterations all selected "
+                f"'{stuck}'. This type is BANNED for this iteration. "
+                f"You MUST propose candidates using DIFFERENT strategy types. "
+                f"Explore underexplored types and parameter regions."
+            ),
+            banned_types={stuck},
         )
-        return warning, {stuck}
 
-    # Single-type mode: check parameter similarity
+    # Single-type mode: ban the exact winning paramset so a new one must win
     if len(recent_params) >= 2 and recent_params[-1] == recent_params[-2]:
-        warning = (
-            f"PARAMETER STAGNATION: The last {lookback} iterations all used '{stuck}' "
-            f"with nearly identical parameters. You MUST explore VERY DIFFERENT "
-            f"parameter combinations — change multiple params by large amounts. "
-            f"Try extreme values, opposite ends of allowed ranges, or unusual combos."
+        return StagnationResult(
+            warning=(
+                f"PARAMETER STAGNATION: The last {lookback} iterations used '{stuck}' "
+                f"with identical parameters. That exact paramset is BANNED for this "
+                f"iteration. Explore VERY DIFFERENT parameter combinations."
+            ),
+            banned_params=recent_params[-1],
         )
-        return warning, set()
 
-    warning = (
-        f"STAGNATION WARNING: The last {lookback} iterations all selected '{stuck}'. "
-        f"Push harder on parameter diversity — try significantly different values, "
-        f"not just small increments from the current best."
+    return StagnationResult(
+        warning=(
+            f"STAGNATION WARNING: The last {lookback} iterations all selected '{stuck}'. "
+            f"Push harder on parameter diversity — try significantly different values."
+        ),
     )
-    return warning, set()
 
 
 def _robustness_label(train_pnl: float, test_pnl: float | None) -> str:
@@ -231,9 +237,9 @@ def run_research_experiment(
         print(f"\nIteration {iteration}/{settings.max_iterations} …", flush=True)
 
         # ── stagnation detection ──────────────────────────────────────
-        stagnation_warning, banned_types = _detect_stagnation(
-            prior_for_llm, allowed_types=allowed_types,
-        )
+        stag = _detect_stagnation(prior_for_llm, allowed_types=allowed_types)
+        stagnation_warning = stag.warning
+        banned_types = stag.banned_types
         if stagnation_warning:
             print(f"  ⚠ {stagnation_warning}", flush=True)
 
@@ -264,6 +270,17 @@ def run_research_experiment(
                 print(
                     f"  Filtered {before - len(specs)} disallowed candidates "
                     f"(types: {', '.join(sorted(disallowed))}), {len(specs)} remain.",
+                    flush=True,
+                )
+
+        # ── enforce parameter ban (single-type stagnation) ────────────
+        if stag.banned_params is not None:
+            before = len(specs)
+            specs = [s for s in specs if s.params != stag.banned_params]
+            if before > len(specs):
+                print(
+                    f"  Removed {before - len(specs)} candidates with banned params, "
+                    f"{len(specs)} remain.",
                     flush=True,
                 )
 

@@ -34,7 +34,10 @@ gamma_scalp buys near-ATM binary options after a dip:
 
 == RULES ==
 - Every candidate must be type "gamma_scalp" — no other types.
-- Always include one candidate close to the baseline as a control.
+- Do NOT re-submit the exact baseline params (atm_band=0.11, dip=0.13, tte=0.28–0.72, lb=4).
+  It has already been measured. Submitting it again wastes a slot.
 - Vary parameters broadly across your 5 candidates — don't cluster them.
 - Pay careful attention to the robustness field in prior iterations.
   Strategies with "strong" robustness are the real winners — chase that, not train PnL.
+- A strategy with lower train PnL but "strong" robustness is BETTER than one with
+  higher train PnL and "moderate" or "weak" robustness.
