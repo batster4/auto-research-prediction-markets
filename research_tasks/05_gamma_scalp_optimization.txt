@@ -1,0 +1,40 @@
+GAMMA SCALP OPTIMIZATION — Improve the known-good baseline strategy
+
+You are optimizing a SINGLE strategy type: gamma_scalp. Do NOT propose any other type.
+
+== BASELINE (proven profitable, train+test) ==
+gamma_scalp(atm_band=0.11, dip_threshold=0.13, min_tte_pct=0.28, max_tte_pct=0.72, lookback=4)
+
+Results on this dataset:
+  Train: PnL=+21.81, entered=438/1012 (43%), HR=55.0%, PF=1.22, Sharpe=0.066, ROC=10.1%
+  Test:  PnL=+4.00,  entered=166/434  (38%), HR=52.4%, PF=1.10, Sharpe=0.029, ROC=4.9%
+  Robustness: moderate (test positive but significantly lower than train)
+
+== YOUR OBJECTIVE ==
+Find gamma_scalp parameter combinations that IMPROVE on this baseline, especially:
+1. Higher TEST robustness (the baseline overfits — train PnL 5x higher than test)
+2. Better profit factor and hit rate on unseen data
+3. Maintaining reasonable entry rate (>10% to have statistical significance)
+
+== STRATEGY MECHANICS REMINDER ==
+gamma_scalp buys near-ATM binary options after a dip:
+- atm_band: how close to 0.50 the price must be (±band). Narrower = more selective.
+- dip_threshold: minimum drop from lookback-high to trigger entry. Higher = fewer but higher-conviction entries.
+- min_tte_pct / max_tte_pct: time-to-expiry window as % of total market life. Controls WHEN to enter.
+- lookback: number of ticks to compute the rolling high for dip detection.
+
+== SEARCH DIRECTIONS TO EXPLORE ==
+- The baseline's test weakness suggests possible overfitting to ATM width or TTE window.
+  Try tighter atm_band (0.02–0.08) to be more selective, or wider (0.15–0.25) for more volume.
+- The dip_threshold of 0.13 may be too loose — try stricter (0.15–0.25) for higher conviction.
+- The TTE window 0.28–0.72 is wide — try early-only (0.05–0.35), mid-only (0.30–0.60), or late-only (0.50–0.85).
+- Lookback=4 is short — try longer (8–15) for more stable dip detection, or very short (2–3) for responsiveness.
+- Consider that narrower atm_band + higher dip_threshold = fewer trades but potentially much higher quality.
+- The goal is NOT to maximize train PnL — it's to maximize the robustness label (strong > moderate > weak > poor).
+
+== RULES ==
+- Every candidate must be type "gamma_scalp" — no other types.
+- Always include one candidate close to the baseline as a control.
+- Vary parameters broadly across your 5 candidates — don't cluster them.
+- Pay careful attention to the robustness field in prior iterations.
+  Strategies with "strong" robustness are the real winners — chase that, not train PnL.

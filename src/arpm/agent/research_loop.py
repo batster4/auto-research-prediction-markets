@@ -44,25 +44,35 @@ MIN_DISTINCT_TYPES = 3
 def _detect_stagnation(
     prior_for_llm: list[dict[str, Any]],
     lookback: int = STAGNATION_LOOKBACK,
+    allowed_types: set[str] | None = None,
 ) -> tuple[str | None, set[str]]:
     """Return (warning_message, banned_types) if the search has stagnated.
 
     Stagnation = the *same* strategy type won the last *lookback* iterations.
+    When only 1 type is allowed, we can't ban it — instead we detect *parameter*
+    stagnation and demand radically different param values.
     """
     if len(prior_for_llm) < lookback:
         return None, set()
 
     recent_types: list[str] = []
+    recent_params: list[dict] = []
     for entry in prior_for_llm[-lookback:]:
         best = entry.get("best_in_iteration")
         if best and isinstance(best.get("strategy"), dict):
             recent_types.append(best["strategy"].get("type", ""))
+            recent_params.append(best["strategy"].get("params", {}))
 
     if len(recent_types) < lookback:
         return None, set()
 
-    if len(set(recent_types)) == 1 and recent_types[0]:
-        stuck = recent_types[0]
+    if len(set(recent_types)) != 1 or not recent_types[0]:
+        return None, set()
+
+    stuck = recent_types[0]
+    can_ban = allowed_types is None or len(allowed_types) > 1
+
+    if can_ban:
         warning = (
             f"STAGNATION DETECTED: The last {lookback} iterations all selected "
             f"'{stuck}'. This type is BANNED for this iteration. "
@@ -71,7 +81,22 @@ def _detect_stagnation(
         )
         return warning, {stuck}
 
-    return None, set()
+    # Single-type mode: check parameter similarity
+    if len(recent_params) >= 2 and recent_params[-1] == recent_params[-2]:
+        warning = (
+            f"PARAMETER STAGNATION: The last {lookback} iterations all used '{stuck}' "
+            f"with nearly identical parameters. You MUST explore VERY DIFFERENT "
+            f"parameter combinations — change multiple params by large amounts. "
+            f"Try extreme values, opposite ends of allowed ranges, or unusual combos."
+        )
+        return warning, set()
+
+    warning = (
+        f"STAGNATION WARNING: The last {lookback} iterations all selected '{stuck}'. "
+        f"Push harder on parameter diversity — try significantly different values, "
+        f"not just small increments from the current best."
+    )
+    return warning, set()
 
 
 def _robustness_label(train_pnl: float, test_pnl: float | None) -> str:
@@ -206,7 +231,9 @@ def run_research_experiment(
         print(f"\nIteration {iteration}/{settings.max_iterations} …", flush=True)
 
         # ── stagnation detection ──────────────────────────────────────
-        stagnation_warning, banned_types = _detect_stagnation(prior_for_llm)
+        stagnation_warning, banned_types = _detect_stagnation(
+            prior_for_llm, allowed_types=allowed_types,
+        )
         if stagnation_warning:
             print(f"  ⚠ {stagnation_warning}", flush=True)
 

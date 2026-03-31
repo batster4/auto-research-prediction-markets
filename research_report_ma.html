@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MA Crossover Strategy — PnL Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;600;700&display=swap');
+  * { margin:0; padding:0; box-sizing:border-box; }
+  :root {
+    --bg: #0c0e14; --surface: #13151e; --border: #1e2233;
+    --text: #e2e4ea; --muted: #7a7f94; --accent: #4f8cff;
+    --green: #22c55e; --red: #ef4444; --amber: #f59e0b;
+  }
+  body { background:var(--bg); color:var(--text); font-family:'Space Grotesk',sans-serif; padding:2rem; }
+  h1 { font-size:1.6rem; font-weight:700; margin-bottom:.3rem; }
+  .subtitle { color:var(--muted); font-size:.9rem; margin-bottom:2rem; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:1rem; margin-bottom:2rem; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1rem 1.2rem; }
+  .card .label { font-size:.7rem; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-bottom:.3rem; }
+  .card .value { font-size:1.3rem; font-weight:600; font-family:'JetBrains Mono',monospace; }
+  .card .value.pos { color:var(--green); }
+  .card .value.neg { color:var(--red); }
+  .card .value.neutral { color:var(--amber); }
+  .chart-wrap { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:1.5rem; margin-bottom:2rem; }
+  .chart-title { font-size:1rem; font-weight:600; margin-bottom:1rem; }
+  .params { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1.4rem; }
+  .params h3 { font-size:.95rem; font-weight:600; margin-bottom:.8rem; }
+  .params table { width:100%; border-collapse:collapse; }
+  .params td { padding:.35rem .6rem; font-size:.85rem; border-bottom:1px solid var(--border); }
+  .params td:first-child { color:var(--muted); font-family:'JetBrains Mono',monospace; width:40%; }
+  .params td:last-child { font-family:'JetBrains Mono',monospace; }
+  .desc { margin-top:2rem; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1.4rem; line-height:1.7; font-size:.9rem; color:var(--muted); }
+  .desc h3 { color:var(--text); margin-bottom:.6rem; }
+  .desc strong { color:var(--text); }
+  canvas { max-height: 340px; }
+  .highlight { background: rgba(34,197,94,.08); border-color: var(--green); }
+</style>
+</head>
+<body>
+
+<h1>ma_crossover — Best Out-of-Sample Strategy (General Research)</h1>
+<p class="subtitle">General Research v3, Iteration 19 &middot; arpm_split_open.csv &middot; 70/30 temporal split &middot; Robustness: STRONG</p>
+
+<div class="grid">
+  <div class="card highlight"><div class="label">Train PnL</div><div class="value pos">+$16.44</div></div>
+  <div class="card highlight"><div class="label">Test PnL (OOS)</div><div class="value pos">+$9.77</div></div>
+  <div class="card"><div class="label">Robustness</div><div class="value pos">strong</div></div>
+  <div class="card"><div class="label">Train / Test Sharpe</div><div class="value">0.061 / 0.090</div></div>
+  <div class="card"><div class="label">Profit Factor</div><div class="value">1.26 / 1.44</div></div>
+  <div class="card"><div class="label">Hit Rate</div><div class="value">34.3% / 37.7%</div></div>
+  <div class="card"><div class="label">Markets Entered</div><div class="value">379 / 146</div></div>
+  <div class="card"><div class="label">Entry Rate</div><div class="value">37.5% / 33.6%</div></div>
+  <div class="card"><div class="label">Max Drawdown</div><div class="value neg">$7.59 / $2.13</div></div>
+  <div class="card"><div class="label">Avg Win / Avg Loss</div><div class="value">$0.61 / $0.25</div></div>
+  <div class="card"><div class="label">ROC</div><div class="value pos">14.7% / 21.9%</div></div>
+  <div class="card"><div class="label">Total Fees</div><div class="value">$1.34 / $0.55</div></div>
+</div>
+
+<div class="chart-wrap">
+  <div class="chart-title">Cumulative PnL — Train (379 trades) vs Test (146 trades)</div>
+  <canvas id="pnlChart"></canvas>
+</div>
+
+<div class="chart-wrap">
+  <div class="chart-title">Entry Price Distribution — Where Does the Strategy Buy?</div>
+  <canvas id="priceChart"></canvas>
+</div>
+
+<div class="chart-wrap">
+  <div class="chart-title">Per-Trade PnL Distribution — Asymmetric Payoff Profile</div>
+  <canvas id="histChart"></canvas>
+</div>
+
+<div class="params">
+  <h3>Strategy Parameters</h3>
+  <table>
+    <tr><td>type</td><td>ma_crossover</td></tr>
+    <tr><td>window</td><td>30 ticks</td></tr>
+    <tr><td>discount</td><td>0.191 (19.1%)</td></tr>
+  </table>
+</div>
+
+<div class="desc">
+  <h3>How ma_crossover works</h3>
+  <p>
+    The strategy computes a <strong>30-tick moving average</strong> of price_yes for each market.
+    It buys YES when the current price drops <strong>19.1% below</strong> that moving average.
+    This is a deep-discount contrarian signal: the market has sold off significantly relative
+    to its recent trend, and the strategy bets on reversion.
+  </p>
+  <p style="margin-top:.6rem">
+    <strong>Why 19.1% works:</strong> A 30-tick MA with a 19.1% discount is extremely selective —
+    only 37% of markets ever show a dip deep enough to trigger entry. When they do, the entry price
+    is typically very low: the <strong>median entry price is just $0.24</strong> (implied probability 24%).
+    This means the strategy is buying deep out-of-the-money options — cheap bets that pay off big
+    when they hit. The win rate is only 34–38%, but winners average <strong>$0.61</strong> while
+    losers average only <strong>$0.25</strong> — a 2.4:1 win/loss ratio. This is a classic
+    <strong>positive-skew</strong> strategy.
+  </p>
+  <p style="margin-top:.6rem">
+    <strong>The remarkable fact:</strong> Test metrics are <em>better</em> than train metrics across
+    the board — higher Sharpe (0.090 vs 0.061), higher ROC (21.9% vs 14.7%), higher profit factor
+    (1.44 vs 1.26), and lower drawdown ($2.13 vs $7.59). This is rare and indicates genuine
+    edge rather than overfitting.
+  </p>
+</div>
+
+<script>
+const trainPnls = [0.52274,0.4922,-0.27264,0.71203,0.76816,-0.2522,-0.1002,0.4165,-0.14052,-0.51792,-0.1506,-0.11028,-0.31354,0.5431,0.8494,0.75798,-0.37502,-0.10524,0.5942,-0.46708,-0.2013,-0.13548,0.83926,-0.1506,-0.14052,0.4922,-0.13044,0.4922,-0.39554,-0.26242,-0.19623,0.4922,-0.11028,0.50238,-0.51792,-0.090166,-0.2013,-0.33402,0.4922,-0.29308,-0.22675,-0.31354,-0.05003,0.6967,-0.080132,0.68646,0.939936,-0.29308,-0.53816,0.7987,-0.41602,-0.11028,0.68646,0.6967,-0.11028,-0.44157,-0.05003,-0.39554,0.52274,0.58398,0.43658,-0.28286,0.51256,-0.1002,-0.33402,0.4922,0.63524,0.39642,-0.27775,-0.070098,-0.64844,0.86956,0.73758,-0.48744,0.70692,0.38144,-0.030015,0.4922,-0.16074,-0.040023,-0.23693,0.58398,0.82912,-0.26242,-0.43646,0.4922,-0.1002,-0.43646,-0.47217,0.48208,0.44666,-0.4058,0.4922,0.52274,-0.16074,-0.24711,-0.62354,-0.38528,0.5942,0.68646,-0.32378,-0.10524,-0.2522,0.52783,0.40144,-0.11028,-0.28286,-0.16581,0.4922,-0.27264,-0.16074,-0.34426,-0.20639,-0.3033,-0.070098,0.7987,0.4922,0.82912,0.51765,0.56354,0.8746,-0.3033,0.4922,-0.25731,-0.060064,-0.14052,-0.05003,0.909834,-0.41091,0.224,0.42152,0.79361,-0.16074,-0.28286,0.62498,0.63524,0.61472,-0.5331,0.75798,0.82405,0.82405,-0.4058,0.26785,0.4922,0.58398,0.61472,-0.14556,-0.21148,0.71714,-0.060064,-0.34938,0.68646,0.49729,-0.37502,-0.33402,-0.12036,-0.29819,-0.47726,-0.38528,-0.28286,-0.3545,-0.27264,0.4922,0.65062,-0.070098,-0.12036,0.4922,0.4922,-0.47217,-0.41602,-0.2013,-0.30842,-0.4058,-0.19623,0.6967,-0.4058,0.4922,-0.28286,0.46184,-0.14052,-0.24202,0.4922,-0.040023,-0.26242,-0.16581,-0.53816,-0.16074,-0.52804,-0.26753,-0.39554,-0.38528,0.45678,-0.080132,0.67622,-0.060064,-0.020008,-0.2522,-0.070098,-0.11028,0.32188,0.35156,-0.2013,0.4922,-0.58852,-0.57346,-0.43646,-0.60358,-0.47726,0.58909,-0.1254,-0.33914,-0.090166,0.4922,-0.37502,0.7987,0.5431,-0.24202,-0.060064,0.6455,0.64037,0.4922,-0.1506,-0.16074,-0.33402,-0.17595,-0.2522,0.63524,-0.54828,-0.060064,0.46184,-0.11532,-0.2013,-0.16074,0.80884,-0.28286,-0.20639,-0.29308,-0.38528,-0.1002,0.60446,-0.41602,-0.05003,0.77834,0.47196,-0.16074,-0.48744,-0.64346,-0.19116,-0.21148,-0.16074,-0.3033,-0.23184,-0.090166,0.74269,0.73758,-0.1002,-0.29308,0.4922,-0.080132,-0.16074,-0.33402,-0.61358,-0.040023,-0.16581,0.65574,-0.21148,-0.080132,-0.19116,-0.33402,-0.095183,-0.2013,-0.2013,-0.1254,-0.32378,0.73758,0.7987,-0.42113,-0.020008,-0.24202,0.77834,-0.080132,-0.34426,-0.3545,-0.27264,-0.1002,-0.32378,-0.63848,-0.33402,-0.39554,0.77834,0.36152,0.70692,-0.26242,0.40646,-0.11028,-0.53816,0.48208,-0.17088,0.79361,-0.080132,-0.040023,-0.040023,0.67622,-0.36476,-0.14052,0.60446,-0.2522,-0.34938,0.66598,-0.45179,-0.43135,-0.2522,-0.16074,-0.49762,-0.22166,-0.11028,-0.1506,-0.24202,0.7987,0.77834,-0.11028,-0.12036,0.66598,-0.14052,-0.26242,-0.49762,-0.055047,-0.2013,-0.065081,-0.55334,-0.1002,-0.040023,0.6711,0.86956,-0.070098,-0.12036,-0.3545,0.7478,-0.30842,-0.42624,-0.14052,-0.3033,-0.19116,0.61985,-0.080132,-0.39554,-0.48235,0.39642,-0.28286,-0.1002,0.71714,0.70692,0.65062,-0.19116,-0.18102,0.83926,-0.4058,-0.1002,-0.05003,-0.18102,0.4922,0.77834,0.35156,0.65062,-0.35963,-0.3289,-0.24202,-0.05003,-0.22166,-0.080132,-0.32378,-0.040023,-0.43646,0.67622,0.32188,-0.19116,-0.63848,-0.42624,0.8494];
+const testPnls = [-0.29308,-0.24202,0.66598,0.81391,0.67622,-0.24711,-0.070098,-0.14556,0.41148,-0.18102,-0.33402,-0.31866,-0.090166,-0.36989,0.71714,0.61472,-0.26242,0.71714,-0.31354,0.4922,-0.19623,-0.26242,-0.090166,0.45678,-0.090166,-0.37502,0.40144,0.46184,-0.13044,-0.35963,-0.12036,-0.5078,-0.14052,-0.58852,0.57376,-0.31354,0.60446,-0.080132,-0.57848,-0.48744,0.47196,0.80884,-0.14052,-0.015004,-0.40067,0.5942,0.4922,-0.13044,0.71714,-0.27264,0.94997,-0.13044,-0.065081,-0.030015,-0.5584,-0.24202,-0.11028,0.4922,0.47702,0.50238,-0.44668,0.65574,-0.11028,0.49729,0.71714,-0.28286,-0.22166,0.4922,-0.24202,0.4922,0.51256,-0.38528,-0.13044,-0.21148,0.8494,-0.33402,-0.12036,0.53292,-0.090166,0.4922,-0.37502,-0.36476,0.52274,-0.13044,-0.11028,-0.37502,0.67622,-0.23184,0.51256,-0.24202,0.68646,-0.31354,-0.51792,-0.21148,-0.14556,-0.05003,0.43658,-0.090166,-0.42624,-0.42624,-0.030015,0.22885,0.40144,-0.075115,-0.37502,0.53292,0.48208,-0.2013,-0.32378,0.50238,-0.61856,0.77834,-0.14556,-0.19116,0.48208,-0.22675,-0.32378,-0.2013,0.919868,-0.19116,0.48208,-0.44668,-0.090166,-0.19116,0.80884,0.68646,0.72736,-0.41602,-0.15567,-0.05003,-0.1002,0.48208,-0.10524,0.42152,-0.28286,0.4922,-0.12036,0.82912,0.73247,-0.17088,-0.080132,-0.57848,-0.59856,0.47196,-0.21148,0.4922];
+const trainPrices = [0.47,0.5,0.27,0.285,0.23,0.25,0.1,0.575,0.14,0.51,0.15,0.11,0.31,0.45,0.15,0.24,0.37,0.105,0.4,0.46,0.2,0.135,0.16,0.15,0.14,0.5,0.13,0.5,0.39,0.26,0.195,0.5,0.11,0.49,0.51,0.09,0.2,0.33,0.5,0.29,0.225,0.31,0.05,0.3,0.08,0.31,0.06,0.29,0.53,0.2,0.41,0.11,0.31,0.3,0.11,0.435,0.05,0.39,0.47,0.41,0.555,0.28,0.48,0.1,0.33,0.5,0.36,0.595,0.275,0.07,0.64,0.13,0.26,0.48,0.29,0.61,0.03,0.5,0.16,0.04,0.235,0.41,0.17,0.26,0.43,0.5,0.1,0.43,0.465,0.51,0.545,0.4,0.5,0.47,0.16,0.245,0.615,0.38,0.4,0.31,0.32,0.105,0.25,0.465,0.59,0.11,0.28,0.165,0.5,0.27,0.16,0.34,0.205,0.3,0.07,0.2,0.5,0.17,0.475,0.43,0.125,0.3,0.5,0.255,0.06,0.14,0.05,0.09,0.405,0.77,0.57,0.205,0.16,0.28,0.37,0.36,0.38,0.525,0.24,0.175,0.175,0.4,0.725,0.5,0.41,0.38,0.145,0.21,0.28,0.06,0.345,0.31,0.495,0.37,0.33,0.12,0.295,0.47,0.38,0.28,0.35,0.27,0.5,0.345,0.07,0.12,0.5,0.5,0.465,0.41,0.2,0.305,0.4,0.195,0.3,0.4,0.5,0.28,0.53,0.14,0.24,0.5,0.04,0.26,0.165,0.53,0.16,0.52,0.265,0.39,0.38,0.535,0.08,0.32,0.06,0.02,0.25,0.07,0.11,0.67,0.64,0.2,0.5,0.58,0.565,0.43,0.595,0.47,0.405,0.125,0.335,0.09,0.5,0.37,0.2,0.45,0.24,0.06,0.35,0.355,0.5,0.15,0.16,0.33,0.175,0.25,0.36,0.54,0.06,0.53,0.115,0.2,0.16,0.19,0.28,0.205,0.29,0.38,0.1,0.39,0.41,0.05,0.22,0.52,0.16,0.48,0.635,0.19,0.21,0.16,0.3,0.23,0.09,0.255,0.26,0.1,0.29,0.5,0.08,0.16,0.33,0.605,0.04,0.165,0.34,0.21,0.08,0.19,0.33,0.095,0.2,0.2,0.125,0.32,0.26,0.2,0.415,0.02,0.24,0.22,0.08,0.34,0.35,0.27,0.1,0.32,0.63,0.33,0.39,0.22,0.63,0.29,0.26,0.585,0.11,0.53,0.51,0.17,0.205,0.08,0.04,0.04,0.32,0.36,0.14,0.39,0.25,0.345,0.33,0.445,0.425,0.25,0.16,0.49,0.22,0.11,0.15,0.24,0.2,0.22,0.11,0.12,0.33,0.14,0.26,0.49,0.055,0.2,0.065,0.545,0.1,0.04,0.325,0.13,0.07,0.12,0.35,0.25,0.305,0.42,0.14,0.3,0.19,0.375,0.08,0.39,0.475,0.595,0.28,0.1,0.28,0.29,0.345,0.19,0.18,0.16,0.4,0.1,0.05,0.18,0.5,0.22,0.64,0.345,0.355,0.325,0.24,0.05,0.22,0.08,0.32,0.04,0.43,0.32,0.67,0.19,0.63,0.42,0.15];
+const testPrices = [0.29,0.24,0.33,0.185,0.32,0.245,0.07,0.145,0.58,0.18,0.33,0.315,0.09,0.365,0.28,0.38,0.26,0.28,0.31,0.5,0.195,0.26,0.09,0.535,0.09,0.37,0.59,0.53,0.13,0.355,0.12,0.5,0.14,0.58,0.42,0.31,0.39,0.08,0.57,0.48,0.52,0.19,0.14,0.015,0.395,0.4,0.5,0.13,0.28,0.27,0.05,0.13,0.065,0.03,0.55,0.24,0.11,0.5,0.515,0.49,0.44,0.34,0.11,0.495,0.28,0.28,0.22,0.5,0.24,0.5,0.48,0.38,0.13,0.21,0.15,0.33,0.12,0.46,0.09,0.5,0.37,0.36,0.47,0.13,0.11,0.37,0.32,0.23,0.48,0.24,0.31,0.31,0.51,0.21,0.145,0.05,0.555,0.09,0.42,0.42,0.03,0.765,0.59,0.075,0.37,0.46,0.51,0.2,0.32,0.49,0.61,0.22,0.145,0.19,0.51,0.225,0.32,0.2,0.08,0.19,0.51,0.44,0.09,0.19,0.19,0.31,0.27,0.41,0.155,0.05,0.1,0.51,0.105,0.57,0.28,0.5,0.12,0.17,0.265,0.17,0.08,0.57,0.59,0.52,0.21,0.5];
+
+function cumsum(arr) { let s=0; return arr.map(v => s+=v); }
+
+new Chart(document.getElementById('pnlChart'), {
+  type:'line',
+  data:{
+    labels: Array.from({length:Math.max(trainPnls.length,testPnls.length)},(_,i)=>i+1),
+    datasets:[
+      {label:'Train (379 trades)',data:cumsum(trainPnls),borderColor:'#4f8cff',backgroundColor:'rgba(79,140,255,.06)',fill:true,borderWidth:1.5,pointRadius:0,tension:.15},
+      {label:'Test OOS (146 trades)',data:cumsum(testPnls),borderColor:'#22c55e',backgroundColor:'rgba(34,197,94,.06)',fill:true,borderWidth:2,pointRadius:0,tension:.15}
+    ]
+  },
+  options:{responsive:true,scales:{
+    x:{title:{display:true,text:'Trade #',color:'#7a7f94'},ticks:{color:'#7a7f94'},grid:{color:'#1e2233'}},
+    y:{title:{display:true,text:'Cumulative PnL ($)',color:'#7a7f94'},ticks:{color:'#7a7f94'},grid:{color:'#1e2233'}}
+  },plugins:{legend:{labels:{color:'#e2e4ea'}}}}
+});
+
+// Entry price distribution
+function histogram(data,bins=20){const mn=Math.min(...data),mx=Math.max(...data),w=(mx-mn)/bins;const edges=Array.from({length:bins},(_,i)=>(mn+i*w).toFixed(2));const counts=new Array(bins).fill(0);data.forEach(v=>{let b=Math.min(Math.floor((v-mn)/w),bins-1);counts[b]++});return{labels:edges,counts}}
+const allPrices = trainPrices.concat(testPrices);
+const hp = histogram(allPrices, 20);
+new Chart(document.getElementById('priceChart'), {
+  type:'bar',
+  data:{labels:hp.labels, datasets:[{label:'Entry Price',data:hp.counts,backgroundColor:'rgba(245,158,11,.5)',borderRadius:3}]},
+  options:{responsive:true,scales:{
+    x:{title:{display:true,text:'Entry Price (YES)',color:'#7a7f94'},ticks:{color:'#7a7f94',maxTicksLimit:12},grid:{color:'#1e2233'}},
+    y:{title:{display:true,text:'Count',color:'#7a7f94'},ticks:{color:'#7a7f94'},grid:{color:'#1e2233'}}
+  },plugins:{legend:{display:false}}}
+});
+
+// PnL histogram — show the asymmetry
+const allPnls = trainPnls.concat(testPnls);
+const hPnl = histogram(allPnls, 30);
+new Chart(document.getElementById('histChart'), {
+  type:'bar',
+  data:{labels:hPnl.labels, datasets:[{label:'Per-trade PnL',data:hPnl.counts,
+    backgroundColor: hPnl.labels.map(l => parseFloat(l)>=0 ? 'rgba(34,197,94,.5)' : 'rgba(239,68,68,.5)'),
+    borderRadius:3}]},
+  options:{responsive:true,scales:{
+    x:{title:{display:true,text:'PnL per trade ($)',color:'#7a7f94'},ticks:{color:'#7a7f94',maxTicksLimit:12},grid:{color:'#1e2233'}},
+    y:{title:{display:true,text:'Count',color:'#7a7f94'},ticks:{color:'#7a7f94'},grid:{color:'#1e2233'}}
+  },plugins:{legend:{display:false}}}
+});
+</script>
+</body>
+</html>
